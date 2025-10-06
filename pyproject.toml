@@ -1,0 +1,15 @@
+[tool.ruff]
+extend-include = ["*.ipynb"]
+line-length = 99
+
+[tool.ruff.lint]
+extend-select = ["B", "I", "W"]
+ignore = ["E731", "E741"]
+
+[tool.ruff.lint.isort]
+lines-between-types = 1
+relative-imports-order = "closest-to-furthest"
+section-order = ["future", "third-party", "first-party", "local-folder"]
+
+[tool.ruff.format]
+preview = true
