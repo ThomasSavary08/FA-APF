@@ -37,9 +37,9 @@ class Sampler(ABC):
         forcings: xarray.Dataset,
         observations: Optional[Array] = None,
     ) -> xarray.Dataset:
-        """
+        r"""
         Use the pretrained denoiser to estimate E[hat{z}_{k} | hat{z}_{k}^{t}, hat{x}_{k-1}^{(i)}]
-        or E[hat{z}_{k} | hat{z}_{k}^{t}, hat{x}_{k-1}^{(i)}, \hat{y}_{k}] if observations are used
+        or E[hat{z}_{k} | hat{z}_{k}^{t}, hat{x}_{k-1}^{(i)}, hat{y}_{k}] if observations are used
         Input(s)
             - noise_level (Array): noise levels sigma_{t} in noisy targets
             - inputs (xarray.Dataset): normalized previous states hat{x}_{k-1}^{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)

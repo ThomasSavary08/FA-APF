@@ -69,7 +69,7 @@ def weighting(
         - max_iter (int): maximum number of iterations to do when looking for a decent inflation factor
     Returns
         - alpha (float): inflation factor used to compute normalized log pseudo-weights
-        - tilde_w (Array): normalized log pseudo-weights [log(\tilde{w}^{k}_{(1)}), ..., log(\tilde{w}^{k}_{(N)})] with dimension (N,)
+        - tilde_w (Array): normalized log pseudo-weights [log(tilde{w}^{k}_{(1)}), ..., log(tilde{w}^{k}_{(N)})] with dimension (N,)
     """
 
     @hk.transform_with_state
@@ -86,8 +86,8 @@ def weighting(
         mean_x: xarray.Dataset,
         noise_levels: Array,
     ) -> xarray.Dataset:
-        """
-        Estimate E[\hat{x}^{k} | \hat{x}^{k-1}^{(i)}] in order to approximate p(\hat{y}^{k} | x^{k-1}^{(i)})
+        r"""
+        Estimate E[hat{x}^{k} | hat{x}^{k-1}^{(i)}] in order to approximate p(hat{y}^{k} | x^{k-1}^{(i)})
         Input(s)
             - task_config (graphcast.TaskConfig)
             - denoiser_architecture_config (denoiser.DenoiserArchitectureConfig)
@@ -129,7 +129,7 @@ def weighting(
         noise_level = noise_levels[0]
         hat_z_1 = noise_level * samplers_utils.spherical_white_noise_like(target_template)
 
-        # 5) Use the classical GenCast Denoiser to estimate E[\hat{z}^{k} | x_{k-1}^{(i)}]
+        # 5) Use the classical GenCast Denoiser to estimate E[hat{z}^{k} | x_{k-1}^{(i)}]
         bcast_noise = xarray_jax.DataArray(
             jnp.tile(noise_level, hat_z_1.sizes["batch"]), dims=("batch",)
         )
@@ -194,8 +194,8 @@ def weighting(
         alpha: float,
         expectation: xarray.Dataset,
     ) -> float:
-        """
-        Compute the unnormalized log pseudo-weights given an estimation of E[\hat{x}^{k} | x^{k-1}_{(i)}]
+        r"""
+        Compute the unnormalized log pseudo-weights given an estimation of E[hat{x}^{k} | x^{k-1}_{(i)}]
         These weights are referred to as “pseudo-weights” because the covariance matrix of observations is modified (inflation)
         and because the constant term that disappears during normalization is not calculated.
         Input(s)
@@ -218,7 +218,7 @@ def weighting(
             -1,
         ))
 
-        # 2) Get the difference between the observation and H(E[\hat{x}^{k} | x^{k-1}_{(i)}])
+        # 2) Get the difference between the observation and H(E[hat{x}^{k} | x^{k-1}_{(i)}])
         v = observations - Hx
 
         # 3) Apply inflation to Sigma_{y}
@@ -250,7 +250,7 @@ def weighting(
         """
         Compute the number of efficient particles given an array containing normalized log pseudo-weights
         Input(s)
-            - log_pseudo_weights (Array): normalized log pseudo-weights [log(\tilde{w}_{k}^{(1)}), ..., log(\tilde{w}_{k}^{(N)})] with dimension (N,)
+            - log_pseudo_weights (Array): normalized log pseudo-weights [log(tilde{w}_{k}^{(1)}), ..., log(tilde{w}_{k}^{(N)})] with dimension (N,)
         Returns
             - n_eff (float): number of effective particles
         """
@@ -347,7 +347,7 @@ def resampling(key: jax.random.PRNGKey, tilde_w: Array, method: str = "systemati
     Resampling step: draw indices from Cat({w_{k}^{(i)}})
     Input(s)
         - key (jax.random.PRNGKey): key used by the jax.random.categorical function
-        - tilde_w (Array): normalized log pseudo-weights [log(\tilde{w}_{k}^{(1)}), ..., log(\tilde{w}_{k}^{(N)})] with dimension (N,)
+        - tilde_w (Array): normalized log pseudo-weights [log(tilde{w}_{k}^{(1)}), ..., log(tilde{w}_{k}^{(N)})] with dimension (N,)
     Returns
         - indices (Array): new indices to use for the sampling step
     """
@@ -742,7 +742,7 @@ def filtering(
     max_iter_solver: int,
     tol_solver: float,
 ):
-    """
+    r"""
     Do filtering with the Fully-Adapted Auxiliary Particle Filter (FA-APF)
     Input(s)
         - filter_path (str): path of the filter
@@ -753,7 +753,7 @@ def filtering(
         - reference (xarray.Dataset): reference trajectory from which observations are taken with dimension (batch=1, time=n, lat=181, lon=360, levels=13)
         - mask (Array): mask used to do subsampling with dimension (181, 360)
         - observed_variables (List[str]): ordered list of observed variables
-        - sigma_y (Array): covariance matrix of normalized observations Sigma_{\hat{y}} with dimension (len(observed_variables),)
+        - sigma_y (Array): covariance matrix of normalized observations Sigma_{hat{y}} with dimension (len(observed_variables),)
         - x0 (xarray.Dataset): initial condition/first state of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
         - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser with dimension (batch=1, time=n, lat=181, lon=360, levels=13)
         - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=n, lat=181, lon=360, levels=13)

@@ -109,12 +109,12 @@ class GenCastDenoiser:
 
 class ConditionalDenoiser:
     """
-    Modified GenCast denoiser to estimate E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, \hat{y}^{k+1}] with MMPS.
+    Modified GenCast denoiser to estimate E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] using MMPS.
     See "Learning Diffusion Priors from Observations by Expectation Maximization" from Rozet et al for more details.
     Input(s)
         - mask (Array): mask used to do subsampling with dimension (181, 360)
         - observed_variables (List[str]): ordered list of observed variables
-        - sigma_y (Array): covariance matrix of normalized observations Sigma_{y} with dimension (len(observed_variables),)
+        - sigma_y (Array): covariance matrix of normalized observations Sigma_{hat{y}} with dimension (len(observed_variables),)
         - std_z (xarray.Dataset): standard deviations of residuals
         - std_x (xarray.Dataset): standard deviations of system states
         - mean_x (xarray.Dataset): means of system states
@@ -176,7 +176,7 @@ class ConditionalDenoiser:
         **kwargs,
     ) -> Array:
         """
-        Call the classical GenCast denoiser and then compute E[\hat{x}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
+        Call the classical GenCast denoiser and compute E[x^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
         Input(s)
             - noisy_targets (Array): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process as jnp.ndarray
             - targets_template (xarray.Dataset): template used by the convert_jax_to_xarray function
@@ -210,9 +210,6 @@ class ConditionalDenoiser:
             mean_x=self.mean_x,
         )
 
-        # Compute E[\hat{x}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}] using E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
-        x = utils.normalize(values=x, scales=self.std_x, locations=self.mean_x)
-
         # Convert the result back to jax
         output = utils.convert_xarray_to_jax(x)
         return output
@@ -225,13 +222,16 @@ class ConditionalDenoiser:
         """
         Apply the observation operator H on a given input x.
         Input(s)
-            - x (Array): input of the observation operator, an estimation of E[\hat{x}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}] in the following
+            - x (Array): input of the observation operator, an estimation of E[x^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}] in the following
             - target_templates (xarray.Dataset): template used by utils.convert_jax_to_xarray
         Returns
             - output (Array): H(x) as jnp.ndarray with dimensions (batch=1, num_stations * len(self.observed_variables))
         """
         # Convert the x to an xarray
         x = utils.convert_jax_to_xarray(x, target_template)
+
+        # Normalize the array
+        x = utils.normalize(values=x, scales=self.std_x, locations=self.mean_x)
 
         # Extract observed variables
         output = x[self.observed_variables]
@@ -254,22 +254,22 @@ class ConditionalDenoiser:
         **kwargs,
     ) -> xarray.Dataset:
         """
-        Call the conditional denoiser to estimate E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, \hat{y}^{k+1}].
+        Call the conditional denoiser to estimate E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}].
         Input(s)
-            - observation (Array): normalized observations \hat{y}^{k+1} with dimension (batch=1, num_stations * len(self.observed_variables))
+            - observation (Array): normalized observations hat{y}^{k+1} with dimension (batch=1, num_stations * len(self.observed_variables))
             - inputs (xarray.Dataset): normalized previous states of the system hat{x}^{k} with dimensions (batch=1, time=2, lat=181, lon=360, levels=13)
             - noisy_targets (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             - noise_levels (xarray.Dataset): noise levels sigma_{t} in noisy targets such that Sigma_{t} = sigma_{t}^{2} * I
             - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
         Returns
-            - output (xarray.Dataset): an estimation of E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, \hat{y}^{k+1}] with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
+            - output (xarray.Dataset): an estimation of E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
         """
         # Convert hat{z}^{k+1}_{t} from xarray_jax to jax
         hat_z_kp1_t = utils.convert_xarray_to_jax(noisy_targets)
         hat_z_kp1_t = jnp.array(hat_z_kp1_t)
 
-        # Use the pretrained GenCast denoiser to estimate E[\hat{x}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
-        hat_x_kp1, vjp = jax.vjp(
+        # Use the pretrained GenCast denoiser to estimate E[x^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
+        x_kp1, vjp = jax.vjp(
             lambda current_residual: self.denoise_and_predict(
                 noisy_targets=current_residual,
                 targets_template=noisy_targets,
@@ -286,9 +286,9 @@ class ConditionalDenoiser:
             lambda expectancy_estimation: self.observation_operator(
                 x=expectancy_estimation, target_template=noisy_targets
             ),
-            hat_x_kp1,
+            x_kp1,
         )
-        Ht = linalg.transpose(H, hat_x_kp1)
+        Ht = linalg.transpose(H, x_kp1)
 
         # Compute the score of p(\hat{y}^{k+1}| hat{z}^{k+1}_{t},  hat{x}^{k})
         sigma_t = jnp.array(xarray_jax.unwrap_data(noise_levels))[..., None] ** 2
@@ -300,12 +300,8 @@ class ConditionalDenoiser:
         (score,) = vjp(Ht(v))
         score = utils.convert_jax_to_xarray(score, noisy_targets)
 
-        # Get unnormalized inputs
-        unnormalized_inputs = utils.unnormalize(inputs, self.std_x, self.mean_x)
-
         # Compute E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
-        hat_x_kp1 = utils.convert_jax_to_xarray(hat_x_kp1, noisy_targets)
-        x_kp1 = utils.unnormalize(hat_x_kp1, self.std_x, self.mean_x)
+        unnormalized_inputs = utils.unnormalize(inputs, self.std_x, self.mean_x)
         hat_z_kp1 = utils.substract_input_and_normalize_target(
             inputs=unnormalized_inputs,
             targets=x_kp1,

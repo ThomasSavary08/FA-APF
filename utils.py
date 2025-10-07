@@ -1,11 +1,12 @@
 # Libraries
+import jax.numpy as jnp  # type: ignore
 import logging
 import numpy as np
 import pandas as pd
 import xarray
 
 from jax import Array  # type: ignore
-from typing import Optional
+from typing import List, Optional
 
 from graphcast import model_utils, xarray_jax, xarray_tree
 
@@ -101,6 +102,26 @@ def normalize(
 
     normalized_dataset = xarray_tree.map_structure(normalize_array, values)
     return normalized_dataset
+
+
+def normalized_observation_covariance(
+    std_x: xarray.Dataset,
+    sigma_y: Array,
+    observed_variables: List[str],
+) -> Array:
+    """
+    Get the covariance matrix of normalized observations
+    Input(s)
+        - std_x (xarray.Dataset): standard deviations of system states
+        - sigma_y (Array): covariance matrix of unnormalized observations with dimension (len(observed_variables),)
+        - observed_variables (List[str]): list of observed variables
+    """
+    std_xy = std_x[observed_variables]
+    std_xy_array = jnp.concatenate([
+        jnp.ravel(jnp.array(std_xy[v].values)) for v in sorted(std_xy.data_vars)
+    ])
+    sigma_hat_y = sigma_y / (std_xy_array**2)
+    return sigma_hat_y
 
 
 def reintroduce_nans(
