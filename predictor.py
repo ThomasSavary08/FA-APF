@@ -11,7 +11,7 @@ from sampler import Sampler
 
 class Predictor:
     """
-    High-level class to draw a sample from p(x_{k} | x_{k-1}^{(i)}) or p(x_{k} | x_{k-1}^{(i)}, y_{k})
+    High-level class to draw a sample from p(x^{k+1} | x^{k}) or p(x^{k+1} | x^{k}, y^{k+1})
     Input(s)
         - std_z (xarray.Dataset): standard deviations of residuals
         - min_x (xarray.Dataset): minimum values of unnnormalized states
@@ -46,9 +46,9 @@ class Predictor:
         **kwargs,
     ) -> xarray.Dataset:
         """
-        Draw a sample x_{k}^{(i)} from p(x_{k} | x_{k-1}^{(i)}) or p(x_{k} | x_{k-1}^{(i)}, y_{k})
+        Draw a sample x^{k+1}_{(i)} from p(x^{k+1} | x^{k}) or p(x^{k+1} | x^{k}, y^{k+1})
         Input(s):
-            - inputs (xarray.Dataset): unnormalized previous states x_{k-1}^{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            - inputs (xarray.Dataset): unnormalized previous states x^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
             - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser
             - observations (Optional[Array]): normalized observations from fictional or real weather stations with dimension (batch=1, num_stations * num_observed_variables)

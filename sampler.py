@@ -38,17 +38,17 @@ class Sampler(ABC):
         observations: Optional[Array] = None,
     ) -> xarray.Dataset:
         r"""
-        Use the pretrained denoiser to estimate E[hat{z}_{k} | hat{z}_{k}^{t}, hat{x}_{k-1}^{(i)}]
-        or E[hat{z}_{k} | hat{z}_{k}^{t}, hat{x}_{k-1}^{(i)}, hat{y}_{k}] if observations are used
+        Use the pre-trained denoiser to estimate E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
+        or E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] if a normalized observation is used.
         Input(s)
-            - noise_level (Array): noise levels sigma_{t} in noisy targets
-            - inputs (xarray.Dataset): normalized previous states hat{x}_{k-1}^{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
-            - noisy_targets (xarray.Dataset): noisy samples hat{z}_{k}^{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
+            - noise_level (Array): noise levels sigma_{t} in noisy targets such that Sigma_{t} = sigma_{t}^{2} * I
+            - inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            - noisy_targets (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
             - observation (Optional[Array]): normalized observations from fictional or real weather stations with dimension (batch=1, num_stations * num_observed_variables)
         Returns
-            - output (xarray.Dataset): an estimation of E[hat{z}_{k} | hat{z}_{k}^{t}, hat{x}_{k-1}^{(i)}]
-            or E[hat{z}_{k} | hat{z}_{k}^{t}, hat{x}_{k-1}^{(i)}, y_{k}] with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
+            - output (xarray.Dataset): an estimation of E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
+            or E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
         """
         bcast_noise = xarray_jax.DataArray(
             jnp.tile(noise_level, noisy_targets.sizes["batch"]), dims=("batch",)
@@ -81,7 +81,7 @@ class Sampler(ABC):
         """
         Sample residuals given the inputs/forcings and optionally an observation for conditional generation.
         Input(s)
-            - inputs (xarray.Dataset): normalized previous states hat{x}_{k-1}^{(i)} with dimensions (batch=1, time=2, lat=181, lon=360, levels=13)
+            - inputs (xarray.Dataset): normalized previous states hat{x}^{k} with dimensions (batch=1, time=2, lat=181, lon=360, levels=13)
             - targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
             - observations (Optional[Array]): normalized observations from fictional or real weather stations with dimension (batch=1, num_stations * num_observed_variables)
@@ -134,7 +134,7 @@ class DPM_Sampler(Sampler):
         """
         Sample residuals using the two normalized previous states of the system and observations from weather stations
         Input(s)
-            inputs (xarray.Dataset): normalized previous states hat{x}_{k-1}^{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
             targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
             observations (Optional[Array]): normalized observations from fictional or real weather stations with dimension (batch=1, num_stations * num_observed_variables)
@@ -162,7 +162,7 @@ class DPM_Sampler(Sampler):
             One step of the DPM-Solver++ (https://arxiv.org/abs/2211.01095) sampling algorithm
             Input(s)
                 i (Array): sampling iteration number
-                hat_z_t (xarray.Dataset): noisy samples hat{z}_{k}^{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
+                hat_z_t (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             Returns
                 hat_z_tp1 (xarray.Dataset): noisy_targets at iteration (i+1) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             """
@@ -252,7 +252,7 @@ class DDIM_Sampler(Sampler):
         """
         Sample residuals using the two normalized previous states of the system and observations from weather stations
         Input(s)
-            inputs (xarray.Dataset): normalized previous states hat{x}_{k-1}^{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
             targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
             observations (Optional[Array]): normalized observations from fictional or real weather stations with dimension (batch=1, num_stations * num_observed_variables)
@@ -279,7 +279,7 @@ class DDIM_Sampler(Sampler):
             One step of the DDIM sampling algorithm (see https://azula.readthedocs.io/0.1.1/api/azula.sample.html#azula.sample.DDIMSampler)
             Input(s)
                 i (Array): sampling iteration number
-                hat_z_t (xarray.Dataset): noisy samples hat{z}_{k}^{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
+                hat_z_t (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             Returns
                 hat_z_tp1 (xarray.Dataset): noisy_targets at iteration (i+1) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             """
@@ -398,7 +398,7 @@ class ABSampler(Sampler):
         """
         Sample residuals using the two normalized previous states of the system and observations from weather stations
         Input(s)
-            inputs (xarray.Dataset): normalized previous states hat{x}_{k-1}^{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
             targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
             observations (Optional[Array]): normalized observations from fictional or real weather stations with dimension (batch=1, num_stations * num_observed_variables)
