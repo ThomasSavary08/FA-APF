@@ -212,3 +212,6 @@ __marimo__/
 # Trajectories (except stats)
 *.nc
 !data/stats/*.nc
+
+# Test files
+test_conditional_sampling.py
