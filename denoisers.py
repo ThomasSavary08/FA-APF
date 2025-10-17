@@ -301,6 +301,7 @@ class ConditionalDenoiser:
         score = utils.convert_jax_to_xarray(score, noisy_targets)
 
         # Compute E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
+        x_kp1 = utils.convert_jax_to_xarray(x_kp1, noisy_targets)
         unnormalized_inputs = utils.unnormalize(inputs, self.std_x, self.mean_x)
         hat_z_kp1 = utils.substract_input_and_normalize_target(
             inputs=unnormalized_inputs,

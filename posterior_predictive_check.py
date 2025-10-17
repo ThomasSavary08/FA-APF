@@ -51,7 +51,7 @@ with open("./data/stats/min_x.nc", "rb") as file:
     min_x = xarray.load_dataset(file, decode_timedelta=True).compute()
 
 # Inputs, targets and forcings
-with open("./data/trajectories/2019_03_29_1.0_13_12.nc", "rb") as file:
+with open("./data/trajectories/2019_03_29_1.0_13_30.nc", "rb") as file:
     example_batch = xarray.load_dataset(file, decode_timedelta=True).compute()
 
 eval_inputs, eval_targets, eval_forcings = data_utils.extract_inputs_targets_forcings(
@@ -63,18 +63,14 @@ eval_inputs, eval_targets, eval_forcings = data_utils.extract_inputs_targets_for
 eval_targets = eval_targets.isel(time=[0])
 eval_forcings = eval_forcings.isel(time=[0])
 
-# Load the reference
-with open("./data/trajectories/reference.nc", "rb") as file:
-    reference = xarray.load_dataset(file, decode_timedelta=True).compute()
-reference = reference.isel(time=[0])
-
 # Sampler configuration
+sampler = "abs"
 sampler_config = {
     "noise_levels": samplers_utils.noise_schedule(
         max_noise_level=88.0,
-        min_noise_level=3e-4,
-        num_noise_levels=60,
-        rho=5.0,
+        min_noise_level=1e-5,
+        num_noise_levels=32,
+        rho=6.0,
     ),
     "order": 3,
     "correction": True,
@@ -89,16 +85,33 @@ denoiser_architecture_config.sparse_transformer_config.attention_type = "tribloc
 
 # Observation configuration
 mask = jnp.array(np.load("./data/observations/mask_1.npy").astype(bool))
-observed_variables = ["2m_temperature"]
-sigma_y = jnp.array([0.1]) ** 2
+observed_variables = [
+    "10m_u_component_of_wind",
+    "10m_v_component_of_wind",
+    "2m_temperature",
+    "mean_sea_level_pressure",
+    "sea_surface_temperature",
+]
+sigma_y = jnp.array([
+    (0.2)**2,
+    (0.2)**2,
+    (0.1)**2,
+    (10.)**2,
+    (0.1)**2,
+])
+sigma_hat_y = utils.normalized_observation_covariance(
+    std_x=std_x,
+    sigma_y=sigma_y,
+    observed_variables=observed_variables,
+)
 
 # MMPS configuration
 solver = "bicgstab"
 max_iter = 2
-tol = 1e-8
+tol = 1e-10
 
 
-# Function to draw samples from p(x_{k} | x_{k-1}^{(i)}, y_{k})
+# Function to draw samples from p(x^{k+1} | x^{k}, y^{k+1})
 @hk.transform_with_state
 def conditional_sampling(
     inputs: xarray.Dataset,
@@ -124,7 +137,7 @@ def conditional_sampling(
     """
     Draw a sample conditionally on an observation
     Input(s)
-        - inputs (xarray.Dataset): previous states hat{x}_{t-2, t-1}^{(i)} of the system with dimensions (batch=1, time=2, lat=181, lon=360, levels=13)
+        - inputs (xarray.Dataset): previous states of the system with dimensions (batch=1, time=2, lat=181, lon=360, levels=13)
         - target_template (xarray.Dataset): template with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
         - forcings (xarray.Dataset): forcings terms used by the GenCast denoiser with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
         - task_config (graphcast.TaskConfig)
@@ -139,12 +152,12 @@ def conditional_sampling(
         - reference (xarray.Dataset): reference from which observations are extracted with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
         - mask (Array): mask used to do subsampling with dimension (181, 360)
         - observed_variables (List[str]): ordered list of observed variables
-        - sigma_y (Array): covariance matrix of observations Sigma_{y} with dimension (len(observed_variables),)
+        - sigma_y (Array): covariance matrix of normalized observations Sigma_{y} with dimension (len(observed_variables),)
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
         - tol (float): numerical tolerance used in the MMPS solver
     Returns
-        - sample (xarray.Dataset): a sample drawn from p(x_{k} | x_{k-1}^{(i)}, y_{k})
+        - sample (xarray.Dataset): a sample drawn from p(x^{k+1} | x^{k}, y^{k+1})
     """
     # Instanciate a denoiser
     denoiser = ConditionalDenoiser(
@@ -181,8 +194,17 @@ def conditional_sampling(
         sampler=_sampler,
     )
 
+    # Clean and normalize observations
+    variable_to_clean = "sea_surface_temperature"
+    if variable_to_clean in inputs.keys():
+        clean_reference = utils.clean_NaN(
+            reference, variable_to_clean, min_x[variable_to_clean]
+        )
+    normalized_reference = utils.normalize(clean_reference, std_x, mean_x)
+
+
     # Extract observations from the reference
-    observations = reference[observed_variables]
+    observations = normalized_reference[observed_variables]
     observations = utils.convert_xarray_to_jax(observations, False)
     observations = jnp.array(observations)
     observations = observations[:, mask, :]
@@ -199,74 +221,70 @@ def conditional_sampling(
         observations=observations,
     )
 
-
 # Jitted version of the function
 conditional_sampling_jitted = jax.jit(
-    lambda rng, i, t, f, r: conditional_sampling.apply(
+    lambda rng, i : conditional_sampling.apply(
         ckpt.params,
         {},
         rng,
         inputs=i,
-        target_template=t,
-        forcings=f,
+        target_template=eval_targets,
+        forcings=eval_forcings,
         task_config=ckpt.task_config,
         denoiser_config=denoiser_architecture_config,
         noise_encoder_config=ckpt.noise_encoder_config,
-        sampler="abs",
+        sampler=sampler,
         sampler_config=sampler_config,
         min_x=min_x,
         std_x=std_x,
         std_z=std_z,
         mean_x=mean_x,
-        reference=r,
+        reference=eval_targets,
         mask=mask,
         observed_variables=observed_variables,
-        sigma_y=sigma_y,
+        sigma_y=sigma_hat_y,
         solver=solver,
         max_iter=max_iter,
         tol=tol,
     )[0]
 )
 
-# Loop on the number of sample to generate (while x8 GPU architectures are not available)
-path = "./data/PPC/"
-num_samples = 200
-for i in tqdm.tqdm(range(1, num_samples + 1)):
-    # Draw a conditional sample
-    rng = jax.random.PRNGKey(i)
-    sample = conditional_sampling_jitted(
-        rng,
-        eval_inputs,
-        eval_targets,
-        eval_forcings,
-        reference,
-    )
-
-    # Save the sample
-    file_name = path + "sample_" + str(i) + ".nc"
-    sample.to_netcdf(file_name)
-
-    # Free memory
-    del sample
-    gc.collect()
-    jax.clear_caches()
-
-
-"""
 # Pmapped version for running in parallel
 conditional_sampling_pmap = xarray_jax.pmap(conditional_sampling_jitted, dim="sample")
 
-# Duplicate input data
-inputs_batch = utils.duplicate_xarray(eval_inputs, new_dim="sample", n=1)
-targets_batch = utils.duplicate_xarray(eval_targets, new_dim="sample", n=1)
-forcings_batch = utils.duplicate_xarray(eval_forcings, new_dim="sample", n=1)
-reference_batch = utils.duplicate_xarray(reference, new_dim="sample", n=1)
+# Path and parallel sampling parameters
+path = "./data/PPC/all_surface_variables/"
+num_samples = 512
+num_gpus = len([device for device in jax.devices() if device.platform == 'gpu'])
+num_steps = int(num_samples // num_gpus)
 
-# Generate samples on multiple GPUs
-samples = conditional_sampling_pmap(
-    inputs_batch,
-    targets_batch,
-    forcings_batch,
-    reference_batch,
+# Duplicate the inputs to get a batch for running in parallel
+input_batch = utils.duplicate_xarray(
+    array=eval_inputs,
+    new_dim="sample",
+    n=num_gpus,
 )
-"""
+
+# Draw samples in parallel from p(x^{k+1} | x^{k}, y^{k+1})
+count = 1
+for i in tqdm.tqdm(range(1, num_steps + 1)):
+    # Sampling
+    key = jax.random.PRNGKey(np.random.randint(10_000))
+    keys = jax.random.split(key, num_gpus)
+    samples = conditional_sampling_pmap(keys, input_batch)
+
+    # Save the samples
+    for j in range(samples.sizes["sample"]):
+        sample = samples.isel(sample=j)
+        print(sample)
+        file_name = path + str(count) + ".nc"
+        sample.to_netcdf(file_name, engine="h5netcdf")
+        count += 1
+
+    # Free memory
+    del samples
+    del sample
+    del key
+    del keys
+    gc.collect()
+    jax.clear_caches()
