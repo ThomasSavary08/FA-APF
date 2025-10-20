@@ -16,7 +16,7 @@ from typing import Dict, List, Union
 import sampler as Samplers
 import utils
 
-from denoisers import ConditionalDenoiser
+from denoisers import ConditionalDenoiser, GenCastDenoiser
 from graphcast import (
     checkpoint,
     data_utils,
@@ -109,6 +109,74 @@ sigma_hat_y = utils.normalized_observation_covariance(
 solver = "bicgstab"
 max_iter = 2
 tol = 1e-10
+
+# Function to draw samples from p(x^{k+1} | x^{k})
+@hk.transform_with_state
+def unconditional_sampling(
+    inputs: xarray.Dataset,
+    target_template: xarray.Dataset,
+    forcings: xarray.Dataset,
+    task_config: graphcast.TaskConfig,
+    denoiser_config: denoiser.DenoiserArchitectureConfig,
+    noise_encoder_config: denoiser.NoiseEncoderConfig,
+    sampler: str,
+    sampler_config: Union[Dict, gencast.SamplerConfig],
+    min_x: xarray.Dataset,
+    std_x: xarray.Dataset,
+    std_z: xarray.Dataset,
+    mean_x: xarray.Dataset,
+) -> xarray.Dataset:
+    """
+    Draw a sample without using any observations.
+    Input(s)
+        - inputs (xarray.Dataset): previous states of the system with dimensions (batch=1, time=2, lat=181, lon=360, levels=13)
+        - target_template (xarray.Dataset): template with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
+        - forcings (xarray.Dataset): forcings terms used by the GenCast denoiser with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
+        - task_config (graphcast.TaskConfig)
+        - denoiser_config (denoiser.DenoiserArchitectureConfig)
+        - noise_encoder_config (denoiser.NoiseEncoderConfig)
+        - sampler (str): sampler to use
+        - sampler_config (Union[Any, gencast.SamplerConfig])
+        - min_x (xarray.Dataset): minimum values of system states for each variable
+        - std_x (xarray.Dataset): standard deviation of system states for each variable
+        - std_z (xarray.Dataset): standard deviation of residuals for each variable
+        - mean_x (xarray.Dataset): mean of system states for each variable
+    Returns
+        - sample (xarray.Dataset): a sample drawn from p(x^{k+1} | x^{k})
+    """
+    # Instanciate a denoiser
+    denoiser = GenCastDenoiser(
+        task_config=task_config,
+        denoiser_architecture_config=denoiser_config,
+        noise_encoder_config=noise_encoder_config,
+    )
+
+    # Instanciate a sampler
+    if sampler == "dpm":
+        _sampler = Samplers.DPM_Sampler(denoiser=denoiser, sampler_config=sampler_config)
+    elif sampler == "ddim":
+        _sampler = Samplers.DDIM_Sampler(denoiser=denoiser, **sampler_config)
+    elif sampler == "abs":
+        _sampler = Samplers.ABSampler(denoiser=denoiser, **sampler_config)
+    else:
+        raise ValueError(f"Unknown sampler «{sampler}». Choose between 'dpm', 'ddim' and 'abs'.")
+
+    # Instanciate a predictor
+    predictor = Predictor(
+        std_z=std_z,
+        min_x=min_x,
+        std_x=std_x,
+        mean_x=mean_x,
+        sampler=_sampler,
+    )
+
+    # Use the sampling function of the sampler
+    return predictor(
+        inputs=inputs,
+        target_template=target_template,
+        forcings=forcings,
+        observations=None,
+    )
 
 
 # Function to draw samples from p(x^{k+1} | x^{k}, y^{k+1})
@@ -221,7 +289,27 @@ def conditional_sampling(
         observations=observations,
     )
 
-# Jitted version of the function
+# Jitted version of the functions
+unconditional_sampling_jitted = jax.jit(
+    lambda rng, i : unconditional_sampling.apply(
+        ckpt.params,
+        {},
+        rng,
+        inputs=i,
+        target_template=eval_targets,
+        forcings=eval_forcings,
+        task_config=ckpt.task_config,
+        denoiser_config=denoiser_architecture_config,
+        noise_encoder_config=ckpt.noise_encoder_config,
+        sampler=sampler,
+        sampler_config=sampler_config,
+        min_x=min_x,
+        std_x=std_x,
+        std_z=std_z,
+        mean_x=mean_x,
+    )[0]
+)
+
 conditional_sampling_jitted = jax.jit(
     lambda rng, i : conditional_sampling.apply(
         ckpt.params,
@@ -250,10 +338,12 @@ conditional_sampling_jitted = jax.jit(
 )
 
 # Pmapped version for running in parallel
+unconditional_sampling_pmap = xarray_jax.pmap(unconditional_sampling_jitted, dim="sample")
 conditional_sampling_pmap = xarray_jax.pmap(conditional_sampling_jitted, dim="sample")
 
 # Path and parallel sampling parameters
 path = "./data/PPC/all_surface_variables/"
+unconditional_path = "./data/PPC/unconditional/"
 num_samples = 512
 num_gpus = len([device for device in jax.devices() if device.platform == 'gpu'])
 num_steps = int(num_samples // num_gpus)
@@ -265,26 +355,52 @@ input_batch = utils.duplicate_xarray(
     n=num_gpus,
 )
 
-# Draw samples in parallel from p(x^{k+1} | x^{k}, y^{k+1})
-count = 1
-for i in tqdm.tqdm(range(1, num_steps + 1)):
-    # Sampling
-    key = jax.random.PRNGKey(np.random.randint(10_000))
-    keys = jax.random.split(key, num_gpus)
-    samples = conditional_sampling_pmap(keys, input_batch)
+# Draw unconditional samples in parallel (i.e from p(x^{k+1} | x^{k}))
+count = int(sum(1 for f in os.listdir(unconditional_path) if f.endswith(".nc")))
+if (count < num_samples):
+    count = 1
+    for i in tqdm.tqdm(range(1, num_steps + 1)):
+        # Sampling
+        key = jax.random.PRNGKey(np.random.randint(10_000))
+        keys = jax.random.split(key, num_gpus)
+        samples = unconditional_sampling_pmap(keys, input_batch)
 
-    # Save the samples
-    for j in range(samples.sizes["sample"]):
-        sample = samples.isel(sample=j)
-        print(sample)
-        file_name = path + str(count) + ".nc"
-        sample.to_netcdf(file_name, engine="h5netcdf")
-        count += 1
+        # Save the samples
+        for j in range(samples.sizes["sample"]):
+            sample = samples.isel(sample=j)
+            file_name = unconditional_path + str(count) + ".nc"
+            sample.to_netcdf(file_name, engine="h5netcdf")
+            count += 1
 
-    # Free memory
-    del samples
-    del sample
-    del key
-    del keys
-    gc.collect()
-    jax.clear_caches()
+        # Free memory
+        del samples
+        del sample
+        del key
+        del keys
+        gc.collect()
+        jax.clear_caches()
+
+# Draw conditional samples in parallel (i.e from p(x^{k+1} | x^{k}, y^{k+1}))
+count = int(sum(1 for f in os.listdir(path) if f.endswith(".nc")))
+if (count < num_samples):
+    count = 1
+    for i in tqdm.tqdm(range(1, num_steps + 1)):
+        # Sampling
+        key = jax.random.PRNGKey(np.random.randint(10_000))
+        keys = jax.random.split(key, num_gpus)
+        samples = conditional_sampling_pmap(keys, input_batch)
+
+        # Save the samples
+        for j in range(samples.sizes["sample"]):
+            sample = samples.isel(sample=j)
+            file_name = path + str(count) + ".nc"
+            sample.to_netcdf(file_name, engine="h5netcdf")
+            count += 1
+
+        # Free memory
+        del samples
+        del sample
+        del key
+        del keys
+        gc.collect()
+        jax.clear_caches()
