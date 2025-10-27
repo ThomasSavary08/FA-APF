@@ -4,7 +4,7 @@ line-length = 99
 
 [tool.ruff.lint]
 extend-select = ["B", "I", "W"]
-ignore = ["E731", "E741"]
+ignore = ["B023", "B905", "E731", "E741"]
 
 [tool.ruff.lint.isort]
 lines-between-types = 1
@@ -13,3 +13,25 @@ section-order = ["future", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.format]
 preview = true
+
+[project]
+name = "filtering"
+version = "0.1.0"
+description = "Data assimilation with GenCast"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Thomas Savary" }]
+dependencies = [
+    "jax",
+    "xarray",
+    "tqdm",
+    "chex",
+    "jraph",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
