@@ -4,13 +4,15 @@ import gc
 import haiku as hk
 import jax
 import jax.numpy as jnp  # type: ignore
+import matplotlib.pyplot as plt
 import numpy as np
 import os
+import seaborn as sns
 import xarray
 
 from jax import Array  # type: ignore
 from tqdm import tqdm
-from typing import Dict, List, Union
+from typing import Dict, List, Tuple, Union
 
 from .wrapper import utils
 from .wrapper.denoisers import ConditionalDenoiser, GenCastDenoiser
@@ -194,7 +196,7 @@ def conditional_sampling(
     # Extract observation from weather stations
     if (observed_variables_weather_stations is not None) and (mask_weather_stations is not None):
         obs_weather_stations = normalized_reference[observed_variables_weather_stations]
-        obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations)
+        obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations, jax_array=False)
         obs_weather_stations = obs_weather_stations[:, mask_weather_stations, :]
         obs_weather_stations = obs_weather_stations.reshape((
             obs_weather_stations.shape[0],
@@ -206,7 +208,7 @@ def conditional_sampling(
     # Extract observation from satellite
     if (observed_variables_satellite is not None) and (mask_satellite is not None):
         obs_satellite = normalized_reference[observed_variables_satellite]
-        obs_satellite = utils.convert_xarray_to_jax(obs_satellite)
+        obs_satellite = utils.convert_xarray_to_jax(obs_satellite, jax_array=False)
         obs_satellite = obs_satellite[:, mask_satellite, :]
         obs_satellite = obs_satellite.reshape((
             obs_satellite.shape[0],
@@ -304,10 +306,10 @@ def ppc(
         sampler_config = ckpt.sampler_config
     else:
         noise_levels = samplers_utils.noise_schedule(
-            max_noise_level=sampler_config["max_noise_level"],
-            min_noise_level=sampler_config["min_noise_level"],
-            num_noise_levels=sampler_config["num_noise_levels"],
-            rho=sampler_config["rho"],
+            max_noise_level=float(sampler_config["max_noise_level"]),
+            min_noise_level=float(sampler_config["min_noise_level"]),
+            num_noise_levels=int(sampler_config["num_noise_levels"]),
+            rho=float(sampler_config["rho"]),
         )
         sampler_config["noise_levels"] = noise_levels
         _ = sampler_config.pop("max_noise_level")
@@ -427,7 +429,7 @@ def ppc(
                     file_name = unconditional_output_path + str(count) + str(".nc")
                 else:
                     file_name = unconditional_output_path + str("/") + str(count) + str(".nc")
-                sample.to_netcdf(file_name)
+                sample.to_netcdf(file_name, engine='netcdf4')
                 count += 1
 
             # Free memory
@@ -458,7 +460,7 @@ def ppc(
                     file_name = conditional_output_path + str(count) + str(".nc")
                 else:
                     file_name = conditional_output_path + str("/") + str(count) + str(".nc")
-                sample.to_netcdf(file_name)
+                sample.to_netcdf(file_name, engine='netcdf4')
                 count += 1
 
             # Free memory
@@ -468,3 +470,248 @@ def ppc(
             del keys
             gc.collect()
             jax.clear_caches()
+
+
+def generate_distribution(
+    eval_target: xarray.Dataset,
+    conditional_path: str,
+    unconditional_path: str,
+    num_samples: int,
+    num_draws: int,
+    variable: Union[str, Tuple],
+    lat: int,
+    lon: int,
+    mask_satellite: Array,
+    mask_weather_stations: Array,
+    std: float,
+) -> Tuple[float, np.ndarray]:
+    """
+    Generate an approximation of the conditional posterior predictive distribution for a specific variable at a specific location.
+    Input(s)
+        - eval_target (xarray.Dataset): xarray from which observations has been taken during posterior sampling
+        - conditional_path (str): path to samples generated using posterior sampling
+        - unconditional_path (str): path to samples genereted using the classical GenCast denoiser
+        - num_samples (int): number of samples to use to approximate the conditional PPC disitribution
+        - num_draws (int): number of samples to draw in order to approximate p(tilde{y}^{k+1} | x^{k+1}_{(i)})
+        - variable (Union[str, Tuple]): variable of interest (and corresponding level of interest if it is atmospheric variable)
+        - lat (int): latitude of interest, should be between -90 and 90
+        - lon (int): longitude of interest, should be between 0 and 359
+        - mask_satellite (Array): boolean Array of dimension (181, 360) corresponding to satellite observations
+        - mask_weather_stations (Array): boolean Array of dimension (181, 360) corresponding to ground stations observations
+        - std (float): standard deviation of unnormalized observations for the variable of interest
+    Returns
+        - y (float): y^{k+1} used by the conditional denoiser during posterior sampling
+        - distributions (Array): approximation of conditional and unconditional PPC distributions with dimension (2, num_samples * num_draws)
+    """
+    # Check if there are enough samples
+    num_conditional_samples = int(
+        sum(1 for f in os.listdir(conditional_path) if f.endswith(".nc"))
+    )
+    num_unconditional_samples = int(
+        sum(1 for f in os.listdir(unconditional_path) if f.endswith(".nc"))
+    )
+    assert num_conditional_samples >= num_samples
+    assert num_unconditional_samples >= num_samples
+
+    # Check latitude and longitude, and define the indice
+    assert (-90 <= lat) and (lat <= 90)
+    assert (0 <= lon) and (lon <= 359)
+    lat, lon = int(lat + 90), lon
+
+    # Check that the location has been observed during sampling
+    if isinstance(variable, Tuple):
+        assert bool(mask_satellite[lat, lon])
+    else:
+        assert bool(mask_weather_stations[lat, lon])
+
+    # Approximate distributions
+    conditional_distribution = []
+    unconditional_distribution = []
+    for i in tqdm(range(1, num_samples + 1)):
+        # Load the conditional sample and extract data
+        if conditional_path[-1] == '/':
+            conditional_sample_path = conditional_path + str(i) + str(".nc")
+        else:
+            conditional_sample_path = conditional_path + str("/") + str(i) + str(".nc")
+        with open(conditional_sample_path, 'rb') as file:
+            conditional_sample = xarray.load_dataset(file, decode_timedelta=False).compute()
+        conditional_data = conditional_sample.isel(lat=[lat], lon=[lon])
+        if isinstance(variable, Tuple):
+            conditional_data = conditional_data.sel(level=[variable[-1]])
+            conditional_data = conditional_data[variable[0]].values.item()
+        else:
+            conditional_data = conditional_data[variable].values.item()
+
+        # Load the unconditional sample and extract data
+        if unconditional_path[-1] == '/':
+            unconditional_sample_path = unconditional_path + str(i) + str(".nc")
+        else:
+            unconditional_sample_path = unconditional_path + str("/") + str(i) + str(".nc")
+        with open(unconditional_sample_path, 'rb') as file:
+            unconditional_sample = xarray.load_dataset(file, decode_timedelta=False).compute()
+        unconditional_data = unconditional_sample.isel(lat=[lat], lon=[lon])
+        if isinstance(variable, Tuple):
+            unconditional_data = unconditional_data.sel(level=[variable[-1]])
+            unconditional_data = unconditional_data[variable[0]].values.item()
+        else:
+            unconditional_data = unconditional_data[variable].values.item()
+
+        # Generate and add noise
+        noise = std * np.random.randn(num_draws)
+        conditional_data = conditional_data + noise
+        unconditional_data = unconditional_data + noise
+
+        # Update lists
+        conditional_distribution.append(conditional_data)
+        unconditional_distribution.append(unconditional_data)
+
+    # Convert lists to a numpy array
+    conditional_distribution = np.concatenate(conditional_distribution)
+    unconditional_distribution = np.concatenate(unconditional_distribution)
+    distributions = np.vstack((conditional_distribution, unconditional_distribution))
+
+    # Get the observation used during posterior sampling
+    y = eval_target.isel(lat=[lat], lon=[lon])
+    if isinstance(variable, Tuple):
+        y = y.sel(level=[variable[-1]])
+        y = y[variable[0]].values.item()
+    else:
+        y = y[variable].values.item()
+
+    return y, distributions
+
+
+def plot_PPC(
+    reference_path: str,
+    checkpoint_path: str,
+    conditional_path: str,
+    unconditional_path: str,
+    output_path: str,
+    mask_sat_path: str,
+    mask_ws_path: str,
+    variables: List,
+    stds: Dict,
+    lat: int,
+    lon: int,
+    num_samples: int,
+    num_draws: int,
+    num_row: int,
+    num_col: int,
+    title: str,
+    figsize: Tuple[int],
+    colors: List[str],
+    xlabels: List[str],
+):
+    """
+    Plot the result of the PPC
+    Input(s)
+        - reference_path (str): path to the reference data from which x^{k} has been taken
+        - checkpoint_path (str): path to the checkpoint needed to load the reference data
+        - conditional_path (str): path to conditional samples
+        - unconditional_path (str): path to unconditional samples
+        - output_path (str): output path to save the image
+        - mask_sat_path (str): path to the satellite mask used during posterior sampling
+        - mask_ws_path (str): path to ground weather stations mask used during posterior sampling
+        - variables (List): list of variables to plot
+        - stds (Dict): dictionary containing standard deviation of variables to plot
+        - lat (int): latitude of interest, should be between -90 and 90
+        - lon (int): latitude of interest, should be between 0 and 359
+        - num_samples (int): number of samples to use to approximate the conditional PPC disitribution
+        - num_draws (int): number of samples to draw in order to approximate p(tilde{y}^{k+1} | x^{k+1}_{(i)})
+        - num_row (int): number of rows in the figure
+        - num_col (int): number of columns in the figure
+        - title (str): global title of the figure
+        - figsize (Tuple[int]): size of the figure
+        - colors (List[str]): colors to use for the figure
+        - xlabels (List[str]): labels to use for the figure
+    """
+    # Checks
+    assert len(stds) == len(variables)
+    assert len(variables) == (num_row * num_col)
+
+    # Load the eval_target
+    with open(checkpoint_path, "rb") as file:
+        ckpt = checkpoint.load(file, gencast.CheckPoint)
+    with open(reference_path, "rb") as file:
+        data = xarray.load_dataset(file, decode_timedelta=True).compute()
+    _, eval_targets, _ = data_utils.extract_inputs_targets_forcings(
+        data,
+        target_lead_times=slice("12h", f"{(data.sizes['time'] - 2) * 12}h"),
+        **dataclasses.asdict(ckpt.task_config),
+    )
+    eval_targets = eval_targets.isel(time=[0])
+    del ckpt, data
+    gc.collect()
+
+    # Load the mask
+    mask_sat = jnp.array(np.load(mask_sat_path).astype(bool))
+    if len(mask_sat.shape) == 3:
+        mask_sat = mask_sat[0, :]
+    mask_ws = jnp.array(np.load(mask_ws_path).astype(bool))
+
+    # Create the figure
+    fig, axes = plt.subplots(num_row, num_col, figsize=figsize)
+    axes = axes.flatten()
+
+    # Create subplots
+    for j, ax in enumerate(axes):
+
+        # Get the standard deviation
+        variable = variables[j]
+        if isinstance(variable, Tuple):
+            level = str(variable[-1])
+            std = float(stds[variable[0]][level])
+        else:
+            std = float(stds[variable])
+
+        # Get the data to plot
+        y, distributions = generate_distribution(
+            eval_target=eval_targets,
+            conditional_path=conditional_path,
+            unconditional_path=unconditional_path,
+            num_samples=num_samples,
+            num_draws=num_draws,
+            variable=variable,
+            lat=lat,
+            lon=lon,
+            mask_satellite=mask_sat,
+            mask_weather_stations=mask_ws,
+            std=std,
+        )
+
+        # Plot the conditional data
+        sns.kdeplot(
+            distributions[0,:],
+            ax=ax,
+            color=colors[0],
+            label=r"$q(\tilde{y}^{k+1} \mid x^{k+1}, y^{k+1})$",
+            fill=True,
+            alpha=0.5,
+        )
+
+        # Plot the unconditional data
+        sns.kdeplot(
+            distributions[1, :],
+            ax=ax,
+            color=colors[1],
+            label=r"$q(\tilde{y}^{k+1} \mid x^{k+1})$",
+            fill=True,
+            alpha=0.5
+        )
+
+        # Plot the true observation
+        ax.axvline(y, color=colors[-1], linestyle="--", label=r"$y^{k+1}$")
+
+        # Set the label
+        ax.set_xlabel(xlabels[j], fontsize=12)
+        ax.set_ylabel("Density", fontsize=12)
+        ax.legend(fontsize=10)
+
+    # Global title
+    plt.suptitle(title, fontsize=14, y = 0.95)
+
+    # Adjustements
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    sns.set_style("whitegrid")
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.show()

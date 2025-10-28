@@ -226,7 +226,7 @@ def normalized_observation_covariance(
 
         # Get sigma_hat_y and the number of ground weather stations
         sigma_y_hat = sigma_y / (std_xy_array**2)
-        num_weather_stations = int(sum(mask))
+        num_weather_stations = int(jnp.sum(mask))
 
         # Duplicate sigma_y_hat
         sigma_y_hat = jnp.tile(sigma_y_hat, num_weather_stations)
@@ -263,7 +263,7 @@ def normalized_observation_covariance(
 
         # Get sigma_hat_y and the number of observed grid points
         sigma_y_hat = sigma_y / (std_xy_array**2)
-        num_grid_points = int(sum(mask))
+        num_grid_points = int(jnp.sum(mask))
 
         # Reshape and duplicate sigma_y_hat
         sigma_y_hat = sigma_y_hat.reshape((-1,))

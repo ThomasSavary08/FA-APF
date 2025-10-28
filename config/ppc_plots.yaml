@@ -1,0 +1,58 @@
+# Number of draws and samples
+num_samples: !!int 512
+num_draws: !!int 512
+
+# Eval_target path
+data_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
+checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/checkpoints/gencast_1deg.npz"
+
+# Sample and output paths
+conditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/all_variables/"
+unconditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/unconditional/"
+output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/PPC/all_variables/surface/ppc_north_america.png"
+
+# Variables
+variables:
+    - "10m_u_component_of_wind"
+    - "10m_v_component_of_wind"
+    - "2m_temperature"
+    - "mean_sea_level_pressure"
+
+# Standard deviations
+stds:
+    10m_u_component_of_wind: !!float 0.15
+    10m_v_component_of_wind: !!float 0.15
+    2m_temperature: !!float 0.05
+    mean_sea_level_pressure: !!float 10.
+
+
+# (Latitude, Longitude)
+lat: !!int 34
+lon: !!int 241
+
+# Mask (observations)
+mask_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/mask/mask_sat_1.npy"
+mask_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/mask/mask_ws_1.npy"
+
+# Labels
+xlabels:
+    - '10m U wind component [m/s]'
+    - '10m V wind component [m/s]'
+    - '2m temperature [K]'
+    - 'Mean sea level pressure [Pa]'
+
+# Colors
+colors:
+    - "red"
+    - "blue"
+    - "black"
+
+# Title
+title: !!str Posterior Predictive Check (PPC) for surface variables at lat=34, lon=241 (North America)
+
+# Dimension of the plot
+plot_size:
+    num_row: !!int 2
+    num_col: !!int 2
+    width: !!float 12.
+    height: !!float 8.
