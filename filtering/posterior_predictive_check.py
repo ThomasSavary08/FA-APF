@@ -478,13 +478,13 @@ def generate_distribution(
     unconditional_path: str,
     num_samples: int,
     num_draws: int,
-    variable: Union[str, Tuple],
+    variables: List[Union[str, List]],
     lat: int,
     lon: int,
     mask_satellite: Array,
     mask_weather_stations: Array,
-    std: float,
-) -> Tuple[float, np.ndarray]:
+    stds: Dict,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Generate an approximation of the conditional posterior predictive distribution for a specific variable at a specific location.
     Input(s)
@@ -493,15 +493,15 @@ def generate_distribution(
         - unconditional_path (str): path to samples genereted using the classical GenCast denoiser
         - num_samples (int): number of samples to use to approximate the conditional PPC disitribution
         - num_draws (int): number of samples to draw in order to approximate p(tilde{y}^{k+1} | x^{k+1}_{(i)})
-        - variable (Union[str, Tuple]): variable of interest (and corresponding level of interest if it is atmospheric variable)
+        - variables (List[Union[str, List]]): variables of interest (and corresponding level of interest if it is atmospheric variable)
         - lat (int): latitude of interest, should be between -90 and 90
         - lon (int): longitude of interest, should be between 0 and 359
         - mask_satellite (Array): boolean Array of dimension (181, 360) corresponding to satellite observations
         - mask_weather_stations (Array): boolean Array of dimension (181, 360) corresponding to ground stations observations
-        - std (float): standard deviation of unnormalized observations for the variable of interest
+        - stds (Dict): standard deviation of unnormalized observations for the variable of interest
     Returns
-        - y (float): y^{k+1} used by the conditional denoiser during posterior sampling
-        - distributions (Array): approximation of conditional and unconditional PPC distributions with dimension (2, num_samples * num_draws)
+        - y (np.ndarray): y^{k+1} used by the conditional denoiser during posterior sampling with dimension (len(variables),)
+        - distributions (np.ndarray): approximation of conditional and unconditional PPC distributions with dimension (2, len(variables), num_samples * num_draws)
     """
     # Check if there are enough samples
     num_conditional_samples = int(
@@ -519,64 +519,77 @@ def generate_distribution(
     lat, lon = int(lat + 90), lon
 
     # Check that the location has been observed during sampling
-    if isinstance(variable, Tuple):
-        assert bool(mask_satellite[lat, lon])
-    else:
-        assert bool(mask_weather_stations[lat, lon])
+    for variable in variables:
+        if isinstance(variable, List):
+            assert bool(mask_satellite[lat, lon])
+        else:
+            assert bool(mask_weather_stations[lat, lon])
 
     # Approximate distributions
-    conditional_distribution = []
-    unconditional_distribution = []
+    distributions = []
     for i in tqdm(range(1, num_samples + 1)):
-        # Load the conditional sample and extract data
+        # Load the conditional sample
         if conditional_path[-1] == '/':
             conditional_sample_path = conditional_path + str(i) + str(".nc")
         else:
             conditional_sample_path = conditional_path + str("/") + str(i) + str(".nc")
         with open(conditional_sample_path, 'rb') as file:
             conditional_sample = xarray.load_dataset(file, decode_timedelta=False).compute()
-        conditional_data = conditional_sample.isel(lat=[lat], lon=[lon])
-        if isinstance(variable, Tuple):
-            conditional_data = conditional_data.sel(level=[variable[-1]])
-            conditional_data = conditional_data[variable[0]].values.item()
-        else:
-            conditional_data = conditional_data[variable].values.item()
+        conditional_sample = conditional_sample.isel(lat=[lat], lon=[lon])
 
-        # Load the unconditional sample and extract data
+        # Load the unconditional sample
         if unconditional_path[-1] == '/':
             unconditional_sample_path = unconditional_path + str(i) + str(".nc")
         else:
             unconditional_sample_path = unconditional_path + str("/") + str(i) + str(".nc")
         with open(unconditional_sample_path, 'rb') as file:
             unconditional_sample = xarray.load_dataset(file, decode_timedelta=False).compute()
-        unconditional_data = unconditional_sample.isel(lat=[lat], lon=[lon])
-        if isinstance(variable, Tuple):
-            unconditional_data = unconditional_data.sel(level=[variable[-1]])
-            unconditional_data = unconditional_data[variable[0]].values.item()
-        else:
-            unconditional_data = unconditional_data[variable].values.item()
+        unconditional_sample = unconditional_sample.isel(lat=[lat], lon=[lon])
 
-        # Generate and add noise
-        noise = std * np.random.randn(num_draws)
-        conditional_data = conditional_data + noise
-        unconditional_data = unconditional_data + noise
+        # Extract data for each variable, add noise and update the lists
+        conditional_distribution = []
+        unconditional_distribution = []
+        for variable in variables:
+            if isinstance(variable, List):
+                conditional_data = conditional_sample.sel(level=[int(variable[-1])])
+                conditional_data = conditional_data[str(variable[0])].values.item()
+                unconditional_data = unconditional_sample.sel(level=[int(variable[-1])])
+                unconditional_data = unconditional_data[str(variable[0])].values.item()
+            else:
+                conditional_data = conditional_sample[str(variable)].values.item()
+                unconditional_data = unconditional_sample[str(variable)].values.item()
+            if isinstance(variable, List):
+                std = float(stds[str(variable[0])][int(variable[-1])])
+            else:
+                std = float(stds[str(variable)])
+            noise = std * np.random.randn(num_draws)
+            conditional_data = conditional_data + noise
+            unconditional_data = unconditional_data + noise
 
-        # Update lists
-        conditional_distribution.append(conditional_data)
-        unconditional_distribution.append(unconditional_data)
+            # Update lists
+            conditional_distribution.append(conditional_data)
+            unconditional_distribution.append(unconditional_data)
 
-    # Convert lists to a numpy array
-    conditional_distribution = np.concatenate(conditional_distribution)
-    unconditional_distribution = np.concatenate(unconditional_distribution)
-    distributions = np.vstack((conditional_distribution, unconditional_distribution))
+        # Transform the lists to numpy arrays
+        conditional_distribution = np.vstack(conditional_distribution)
+        unconditional_distribution = np.vstack(unconditional_distribution)
+        distribution = np.stack([conditional_distribution, unconditional_distribution], axis = 0)
+        distributions.append(distribution)
+
+    # Convert the result to a numpy array
+    distributions = np.concatenate(distributions, axis=-1)
 
     # Get the observation used during posterior sampling
-    y = eval_target.isel(lat=[lat], lon=[lon])
-    if isinstance(variable, Tuple):
-        y = y.sel(level=[variable[-1]])
-        y = y[variable[0]].values.item()
-    else:
-        y = y[variable].values.item()
+    y = []
+    eval_target = eval_target.isel(lat=[lat], lon=[lon])
+    for variable in variables:
+        if isinstance(variable, List):
+            obs = eval_target.sel(level=[int(variable[-1])])
+            obs = obs[str(variable[0])].values.item()
+        else:
+            obs = eval_target[str(variable)].values.item()
+        y.append(obs)
+    y = np.asarray(y)
 
     return y, distributions
 
@@ -626,7 +639,6 @@ def plot_PPC(
         - xlabels (List[str]): labels to use for the figure
     """
     # Checks
-    assert len(stds) == len(variables)
     assert len(variables) == (num_row * num_col)
 
     # Load the eval_target
@@ -653,35 +665,27 @@ def plot_PPC(
     fig, axes = plt.subplots(num_row, num_col, figsize=figsize)
     axes = axes.flatten()
 
+    # Get the data to be plotted
+    y, distributions = generate_distribution(
+        eval_target=eval_targets,
+        conditional_path=conditional_path,
+        unconditional_path=unconditional_path,
+        num_samples=num_samples,
+        num_draws=num_draws,
+        variables=variables,
+        lat=lat,
+        lon=lon,
+        mask_satellite=mask_sat,
+        mask_weather_stations=mask_ws,
+        stds=stds,
+    )
+
     # Create subplots
     for j, ax in enumerate(axes):
 
-        # Get the standard deviation
-        variable = variables[j]
-        if isinstance(variable, Tuple):
-            level = str(variable[-1])
-            std = float(stds[variable[0]][level])
-        else:
-            std = float(stds[variable])
-
-        # Get the data to plot
-        y, distributions = generate_distribution(
-            eval_target=eval_targets,
-            conditional_path=conditional_path,
-            unconditional_path=unconditional_path,
-            num_samples=num_samples,
-            num_draws=num_draws,
-            variable=variable,
-            lat=lat,
-            lon=lon,
-            mask_satellite=mask_sat,
-            mask_weather_stations=mask_ws,
-            std=std,
-        )
-
         # Plot the conditional data
         sns.kdeplot(
-            distributions[0,:],
+            distributions[0, j, :],
             ax=ax,
             color=colors[0],
             label=r"$q(\tilde{y}^{k+1} \mid x^{k+1}, y^{k+1})$",
@@ -691,7 +695,7 @@ def plot_PPC(
 
         # Plot the unconditional data
         sns.kdeplot(
-            distributions[1, :],
+            distributions[1, j, :],
             ax=ax,
             color=colors[1],
             label=r"$q(\tilde{y}^{k+1} \mid x^{k+1})$",
@@ -700,7 +704,7 @@ def plot_PPC(
         )
 
         # Plot the true observation
-        ax.axvline(y, color=colors[-1], linestyle="--", label=r"$y^{k+1}$")
+        ax.axvline(y[j], color=colors[-1], linestyle="--", label=r"$y^{k+1}$")
 
         # Set the label
         ax.set_xlabel(xlabels[j], fontsize=12)
