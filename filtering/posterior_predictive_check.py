@@ -429,7 +429,7 @@ def ppc(
                     file_name = unconditional_output_path + str(count) + str(".nc")
                 else:
                     file_name = unconditional_output_path + str("/") + str(count) + str(".nc")
-                sample.to_netcdf(file_name, engine='netcdf4', format="NETCDF4")
+                sample.to_netcdf(file_name, engine="netcdf4", format="NETCDF4")
                 count += 1
 
             # Free memory
@@ -460,7 +460,7 @@ def ppc(
                     file_name = conditional_output_path + str(count) + str(".nc")
                 else:
                     file_name = conditional_output_path + str("/") + str(count) + str(".nc")
-                sample.to_netcdf(file_name, engine='netcdf4', format="NETCDF4")
+                sample.to_netcdf(file_name, engine="netcdf4", format="NETCDF4")
                 count += 1
 
             # Free memory
@@ -529,20 +529,20 @@ def generate_distribution(
     distributions = []
     for i in tqdm(range(1, num_samples + 1)):
         # Load the conditional sample
-        if conditional_path[-1] == '/':
+        if conditional_path[-1] == "/":
             conditional_sample_path = conditional_path + str(i) + str(".nc")
         else:
             conditional_sample_path = conditional_path + str("/") + str(i) + str(".nc")
-        with open(conditional_sample_path, 'rb') as file:
+        with open(conditional_sample_path, "rb") as file:
             conditional_sample = xarray.load_dataset(file, decode_timedelta=True).compute()
         conditional_sample = conditional_sample.isel(lat=[lat], lon=[lon])
 
         # Load the unconditional sample
-        if unconditional_path[-1] == '/':
+        if unconditional_path[-1] == "/":
             unconditional_sample_path = unconditional_path + str(i) + str(".nc")
         else:
             unconditional_sample_path = unconditional_path + str("/") + str(i) + str(".nc")
-        with open(unconditional_sample_path, 'rb') as file:
+        with open(unconditional_sample_path, "rb") as file:
             unconditional_sample = xarray.load_dataset(file, decode_timedelta=True).compute()
         unconditional_sample = unconditional_sample.isel(lat=[lat], lon=[lon])
 
@@ -573,7 +573,7 @@ def generate_distribution(
         # Transform the lists to numpy arrays
         conditional_distribution = np.vstack(conditional_distribution)
         unconditional_distribution = np.vstack(unconditional_distribution)
-        distribution = np.stack([conditional_distribution, unconditional_distribution], axis = 0)
+        distribution = np.stack([conditional_distribution, unconditional_distribution], axis=0)
         distributions.append(distribution)
 
     # Convert the result to a numpy array
@@ -682,7 +682,6 @@ def plot_PPC(
 
     # Create subplots
     for j, ax in enumerate(axes):
-
         # Plot the conditional data
         sns.kdeplot(
             distributions[0, j, :],
@@ -700,7 +699,7 @@ def plot_PPC(
             color=colors[1],
             label=r"$q(\tilde{y}^{k+1} \mid x^{k+1})$",
             fill=True,
-            alpha=0.5
+            alpha=0.5,
         )
 
         # Plot the true observation
@@ -712,7 +711,7 @@ def plot_PPC(
         ax.legend(fontsize=10)
 
     # Global title
-    plt.suptitle(title, fontsize=14, y = 0.95)
+    plt.suptitle(title, fontsize=14, y=0.95)
 
     # Adjustements
     plt.tight_layout(rect=[0, 0, 1, 0.95])

@@ -1,7 +1,7 @@
 # Libraries
 from google.cloud import storage
 
-from graphcast import checkpoint, gencast
+from filtering.wrapper.graphcast import checkpoint, gencast
 
 # Authenticate with Google Cloud Storage
 gcs_client = storage.Client.create_anonymous_client()

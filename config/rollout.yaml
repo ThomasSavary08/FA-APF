@@ -1,0 +1,20 @@
+# Number of samples to generate
+num_samples: !!int 256
+
+# Data paths
+output_path: !!str "/gpfs/scratch/acad/sail/GenCast/data/filtering/2019_03/unconditional/"
+data_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
+
+# Checkpoint path
+checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/checkpoints/gencast_1deg.npz"
+
+# Stats path
+min_x_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/stats/min_x.nc"
+std_x_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/stats/std_x.nc"
+std_z_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/stats/std_z.nc"
+mean_x_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/stats/mean_x.nc"
+
+# Sampler
+sampler: !!str "dpm"
+sampler_config:
+  config: !!str "From GenCast"

@@ -1,10 +1,9 @@
 # Libraries
 import dataclasses
+import fa_apf
 import jax.numpy as jnp  # type: ignore
 import os
 import xarray
-
-import fa_apf
 
 from graphcast import checkpoint, data_utils, gencast, samplers_utils
 
