@@ -1,9 +1,9 @@
 # Number of samples to generate
-num_samples: !!int 512
+num_samples: !!int 1
 
 # Data paths
-conditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/all_variables/"
-unconditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/unconditional/"
+conditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/test/conditional/"
+unconditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/test/unconditional/"
 data_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
 
 # Checkpoint path

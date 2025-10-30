@@ -429,7 +429,7 @@ def ppc(
                     file_name = unconditional_output_path + str(count) + str(".nc")
                 else:
                     file_name = unconditional_output_path + str("/") + str(count) + str(".nc")
-                sample.to_netcdf(file_name, engine='netcdf4')
+                sample.to_netcdf(file_name, engine='netcdf4', format="NETCDF4")
                 count += 1
 
             # Free memory
@@ -460,7 +460,7 @@ def ppc(
                     file_name = conditional_output_path + str(count) + str(".nc")
                 else:
                     file_name = conditional_output_path + str("/") + str(count) + str(".nc")
-                sample.to_netcdf(file_name, engine='netcdf4')
+                sample.to_netcdf(file_name, engine='netcdf4', format="NETCDF4")
                 count += 1
 
             # Free memory
@@ -534,7 +534,7 @@ def generate_distribution(
         else:
             conditional_sample_path = conditional_path + str("/") + str(i) + str(".nc")
         with open(conditional_sample_path, 'rb') as file:
-            conditional_sample = xarray.load_dataset(file, decode_timedelta=False).compute()
+            conditional_sample = xarray.load_dataset(file, decode_timedelta=True).compute()
         conditional_sample = conditional_sample.isel(lat=[lat], lon=[lon])
 
         # Load the unconditional sample
@@ -543,7 +543,7 @@ def generate_distribution(
         else:
             unconditional_sample_path = unconditional_path + str("/") + str(i) + str(".nc")
         with open(unconditional_sample_path, 'rb') as file:
-            unconditional_sample = xarray.load_dataset(file, decode_timedelta=False).compute()
+            unconditional_sample = xarray.load_dataset(file, decode_timedelta=True).compute()
         unconditional_sample = unconditional_sample.isel(lat=[lat], lon=[lon])
 
         # Extract data for each variable, add noise and update the lists

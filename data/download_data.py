@@ -31,7 +31,7 @@ if not os.path.exists(local_filename):
 ###########################################
 
 # Instanciate a folder for statistics
-local_dir = "./stats34"
+local_dir = "./stats"
 os.makedirs(local_dir, exist_ok=True)
 
 # Download std of z
