@@ -1,10 +1,10 @@
 # Libraries
+import dataclasses
 import gc
 import haiku as hk
 import jax  # type: ignore
 import jax.numpy as jnp  # type: ignore
 import numpy as np
-import warnings
 import xarray
 
 from jax import Array  # type: ignore
@@ -15,6 +15,8 @@ from typing import Dict, List, Tuple, Union
 from .wrapper import utils
 from .wrapper.denoisers import ConditionalDenoiser, GenCastDenoiser
 from .wrapper.graphcast import (
+    checkpoint,
+    data_utils,
     denoiser,
     gencast,
     graphcast,
@@ -22,7 +24,7 @@ from .wrapper.graphcast import (
     xarray_jax,
 )
 from .wrapper.predictor import Predictor
-from .wrapper.sampler import Samplers
+from .wrapper.sampler import ABSampler, DDIM_Sampler, DPM_Sampler
 
 
 def weighting(
@@ -326,15 +328,14 @@ def weighting(
     expectation_estimations = []
     print("     Computation of expectations estimation...")
     for i in tqdm(range(1, num_steps + 1)):
-
         # Get a batch of particles to do the job in parallel
         samples = []
         start_index = (i - 1) * num_gpus + 1
         for index in range(start_index, min(start_index + num_gpus, N + 1)):
-            if previous_particle_path[-1] == '/':
+            if previous_particle_path[-1] == "/":
                 particle_path = previous_particle_path + str(index) + str(".nc")
             else:
-                particle_path = previous_particle_path + str('/') + str(index) + str(".nc")
+                particle_path = previous_particle_path + str("/") + str(index) + str(".nc")
             with open(particle_path, "rb") as file:
                 particle = xarray.load_dataset(file, decode_timedelta=True).compute()
             samples.append(particle)
@@ -373,7 +374,7 @@ def weighting(
                     std_x=std_x,
                     mean_x=mean_x,
                     alpha=alpha,
-                    expectation=expectation_estimations[i]
+                    expectation=expectation_estimations[i],
                 )
             )
         hat_tilde_w = jnp.asarray(hat_tilde_w)
@@ -403,9 +404,9 @@ def weighting(
 
 def resampling(key: jax.random.PRNGKey, tilde_w: Array, method: str = "systematic"):
     """
-    Resampling step: draw indices from Cat({w^{k+1}_{(i)}})
+    Resampling step: draw indices directly from Cat({w^{k+1}_{(i)}}) or using systematic resampling
     Input(s)
-        - key (jax.random.PRNGKey): key used by the jax.random.categorical function
+        - key (jax.random.PRNGKey): random key
         - tilde_w (Array): normalized log pseudo-weights [log(tilde{w}^{k+1}_{(1)}), ..., log(tilde{w}^{k+1}_{(N)})] with dimension (N,)
     Returns
         - indices (Array): new indices to use for the sampling step
@@ -422,7 +423,7 @@ def resampling(key: jax.random.PRNGKey, tilde_w: Array, method: str = "systemati
         positions = u0 + jnp.arange(N) / N
         indices = jnp.searchsorted(cumulative_sum, positions, side="right")
     else:
-        raise NotImplementedError(f"resampling method '{method}' is not implemented!")
+        raise NotImplementedError(f"resampling method '{method}' hasn't been implemented!")
     return indices
 
 
@@ -443,15 +444,17 @@ def sampling(
     std_z: xarray.Dataset,
     mean_x: xarray.Dataset,
     observations: Array,
-    mask: Array,
-    observed_variables: List[str],
+    mask_sat: Union[Array, None],
+    mask_ws: Union[Array, None],
+    observed_variables_sat: Union[List[str], None],
+    observed_variables_ws: Union[List[str], None],
     sigma_y: Array,
     solver: str,
     max_iter: int,
     tol: float,
 ):
-    r"""
-    Sampling step: draw samples from p(x^{k+1} | x^{k}^{a_{k+1}_{(i)}}, \hat{y}^{k+1})
+    """
+    Sampling step: draw samples from p(x^{k+1} | x^{k}_{a^{k+1}_{(i)}}, hat{y}^{k+1})
     Input(s)
         - indices (Array): indices [a^{k+1}_{(1)}, ..., a^{k+1}_{(N)}] to draw samples from with dimension (N,)
         - previous_particles_path (str): path of particles at time k
@@ -468,10 +471,12 @@ def sampling(
         - std_x (xarray.Dataset): standard deviation of system states for each variable
         - std_z (xarray.Dataset): standard deviation of residuals for each variable
         - mean_x (xarray.Dataset): mean of system states for each variable
-        - observations (Array): normalized observations of the true state of the system at time (k+1) with dimension (batch=1, num_stations * len(self.observed_variables))
-        - mask (Array): mask used to do subsampling with dimension (181, 360)
-        - observed_variables (List[str]): ordered list of observed variables
-        - sigma_y (Array): covariance matrix of normalized observations Sigma_{y} with dimension (len(observed_variables),)
+        - observations (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
+        - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
+        - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+        - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
+        - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
         - tol (float): numerical tolerance used in the MMPS solver
@@ -492,8 +497,10 @@ def sampling(
         std_z: xarray.Dataset,
         mean_x: xarray.Dataset,
         observations: Array,
-        mask: Array,
-        observed_variables: List[str],
+        mask_sat: Union[Array, None],
+        mask_ws: Union[Array, None],
+        observed_variables_sat: Union[List[str], None],
+        observed_variables_ws: Union[List[str], None],
         sigma_y: Array,
         solver: str,
         max_iter: int,
@@ -514,20 +521,24 @@ def sampling(
             - std_x (xarray.Dataset): standard deviation of system states for each variable
             - std_z (xarray.Dataset): standard deviation of residuals for each variable
             - mean_x (xarray.Dataset): mean of system states for each variable
-            - observations (Array): normalized observations of the true state of the system at time (k+1) with dimension (batch=1, num_stations * len(self.observed_variables))
-            - mask (Array): mask used to do subsampling with dimension (181, 360)
-            - observed_variables (List[str]): ordered list of observed variables
-            - sigma_y (Array): covariance matrix of normalized observations Sigma_{y} with dimension (len(observed_variables),)
+            - observations (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
+            - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
+            - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+            - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
+            - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+            - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
             - solver (str): solver to use in MMPS iterations
             - max_iter (int): maximum number of iterations to do when solving the system in MMPS
             - tol (float): numerical tolerance used in the MMPS solver
         Returns
-            - sample (xarray.Dataset): a sample drawn from p(x^{k+1} | x^{k}^{(i)}, hat{y}^{k+1})
+            - sample (xarray.Dataset): a sample drawn from p(x^{k+1} | x^{k}_{a^{k+1}_(i)}, hat{y}^{k+1})
         """
         # Instanciate a denoiser
         denoiser = ConditionalDenoiser(
-            mask=mask,
-            observed_variables=observed_variables,
+            mask_satellite=mask_sat,
+            mask_weather_stations=mask_ws,
+            observed_variables_satellite=observed_variables_sat,
+            observed_variables_weather_stations=observed_variables_ws,
             sigma_y=sigma_y,
             std_z=std_z,
             std_x=std_x,
@@ -542,11 +553,11 @@ def sampling(
 
         # Instanciate a sampler
         if sampler == "dpm":
-            _sampler = Samplers.DPM_Sampler(denoiser=denoiser, sampler_config=sampler_config)
+            _sampler = DPM_Sampler(denoiser=denoiser, sampler_config=sampler_config)
         elif sampler == "ddim":
-            _sampler = Samplers.DDIM_Sampler(denoiser=denoiser, **sampler_config)
+            _sampler = DDIM_Sampler(denoiser=denoiser, **sampler_config)
         elif sampler == "abs":
-            _sampler = Samplers.ABSampler(denoiser=denoiser, **sampler_config)
+            _sampler = ABSampler(denoiser=denoiser, **sampler_config)
         else:
             raise ValueError(
                 f"Unknown sampler «{sampler}». Choose between 'dpm', 'ddim' and 'abs'."
@@ -588,8 +599,10 @@ def sampling(
             std_z=std_z,
             mean_x=mean_x,
             observations=observations,
-            mask=mask,
-            observed_variables=observed_variables,
+            mask_sat=mask_sat,
+            mask_ws=mask_ws,
+            observed_variables_sat=observed_variables_sat,
+            observed_variables_ws=observed_variables_ws,
             sigma_y=sigma_y,
             solver=solver,
             max_iter=max_iter,
@@ -600,35 +613,34 @@ def sampling(
     # pmap version to run in parallel
     conditional_sampling_pmap = xarray_jax.pmap(conditional_sampling_jitted, dim="sample")
 
-    # Ignore warnings of GenCast (about sparsity)
-    warnings.filterwarnings("ignore")
-
     # Draw a sample from p(x_{k}, x_{k-1}^{a_{k}^{(i)}}) for each i in indices
     print(" (Sampling)")
     N = indices.shape[0]
-    num_devices = len(jax.devices())
-    if N % num_devices == 0:
-        num_steps = N // num_devices
-    else:
-        num_steps = N // num_devices + 1
+    num_gpus = len([device for device in jax.devices() if device.platform == "gpu"])
+    assert int(N % num_gpus) == 0
+    num_steps = int(N // num_gpus)
 
     # Loop on the number steps
     print("     Draw conditional samples...")
     count = 1
     for i in tqdm(range(1, num_steps + 1)):
-        samples = []
-        start_index = (i - 1) * num_devices + 1
-
         # Get a batch of particles to do the job in parallel
-        for index in range(start_index, min(start_index + num_devices, N + 1)):
-            particle_path = previous_particles_path + str(indices[index - 1] + 1) + ".nc"
+        samples = []
+        start_index = (i - 1) * num_gpus + 1
+        for index in range(start_index, min(start_index + num_gpus, N + 1)):
+            if previous_particles_path[-1] == "/":
+                particle_path = previous_particles_path + str(indices[index - 1] + 1) + str(".nc")
+            else:
+                particle_path = (
+                    previous_particles_path + str("/") + str(indices[index - 1] + 1) + str(".nc")
+                )
             with open(particle_path, "rb") as file:
                 particle = xarray.load_dataset(file, decode_timedelta=True).compute()
             samples.append(particle)
 
         # Do computations in parallel
-        key = jax.random.PRNGKey(np.random.randint(i * 1000))
-        keys = jax.random.split(key, num_devices)
+        key = jax.random.PRNGKey(np.random.randint(100_000))
+        keys = jax.random.split(key, num_gpus)
         samples = xarray.concat(
             samples, dim=xarray.DataArray([j for j in range(len(samples))], dims="sample")
         )
@@ -645,8 +657,11 @@ def sampling(
                 [samples.isel(sample=j), next_input], dim="time", data_vars="minimal"
             )
             next_input = next_input.isel(time=slice(-2, None))
-            file_name = new_particles_path + str(count) + ".nc"
-            next_input.to_netcdf(file_name)
+            if new_particles_path[-1] == "/":
+                file_name = new_particles_path + str(count) + str(".nc")
+            else:
+                file_name = new_particles_path + str("/") + str(count) + str(".nc")
+            next_input.to_netcdf(file_name, format="NETCDF4", engine="netcdf4")
             count += 1
 
         # Free memory
@@ -665,8 +680,10 @@ def step(
     N_thr_max: int,
     alpha_init: float,
     observations: Array,
-    mask: Array,
-    observed_variables: List[str],
+    mask_sat: Union[Array, None],
+    mask_ws: Union[Array, None],
+    observed_variables_sat: Union[List[str], None],
+    observed_variables_ws: Union[List[str], None],
     sigma_y: Array,
     forcings: xarray.Dataset,
     target_template: xarray.Dataset,
@@ -694,11 +711,12 @@ def step(
     - N_thr_min (int): minimum number of efficient particles
     - N_thr_max (int): maximum number of efficient particles
     - alpha_init (float): first inflation coefficient
-    - previous_particle_path (str): path to particles at time k
-    - observations (Array): normalized observations of the true state of the system at time (k+1) with dimension (batch=1, num_stations * len(self.observed_variables))
-    - mask (Array): mask used to do subsampling with dimension (181, 360)
-    - observed_variables (List[str]): ordered list of observed variables
-    - sigma_y (Array): covariance matrix of normalized observations Sigma_{y} with dimension (len(observed_variables),)
+    - observations (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
+    - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
+    - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+    - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
+    - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+    - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
     - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser
     - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
     - ckpt (gencast.CheckPoint): checkpoint to use
@@ -717,6 +735,7 @@ def step(
     - max_iter_solver (int): maximum number of iterations to do when solving the system in MMPS
     - tol_solver (float): numerical tolerance used in the MMPS solver
     """
+    # Compute the weights and get the indices for sampling
     if step_number > 1:
         _, tilde_w = weighting(
             N=N,
@@ -725,8 +744,10 @@ def step(
             alpha_init=alpha_init,
             previous_particle_path=previous_particles_path,
             observations=observations,
-            mask=mask,
-            observed_variables=observed_variables,
+            mask_sat=mask_sat,
+            mask_ws=mask_ws,
+            observed_variables_sat=observed_variables_sat,
+            observed_variables_ws=observed_variables_ws,
             sigma_y=sigma_y,
             forcings=forcings,
             target_template=target_template,
@@ -741,11 +762,11 @@ def step(
             noise_levels=noise_levels,
             max_iter=max_iter_alpha,
         )
-        indices = resampling(
-            key=jax.random.PRNGKey(np.random.randint(step_number * 1_000)), tilde_w=tilde_w
-        )
+        indices = resampling(key=jax.random.PRNGKey(np.random.randint(100_000)), tilde_w=tilde_w)
     else:
         indices = jnp.asarray([i for i in range(N)])
+
+    # Do sampling from the optimal proposal
     sampling(
         indices=indices,
         previous_particles_path=previous_particles_path,
@@ -763,8 +784,10 @@ def step(
         std_z=std_z,
         mean_x=mean_x,
         observations=observations,
-        mask=mask,
-        observed_variables=observed_variables,
+        mask_sat=mask_sat,
+        mask_ws=mask_ws,
+        observed_variables_sat=observed_variables_sat,
+        observed_variables_ws=observed_variables_ws,
         sigma_y=sigma_y,
         solver=solver,
         max_iter=max_iter_solver,
@@ -773,86 +796,161 @@ def step(
 
 
 def filtering(
-    filter_path: str,
+    data_path: str,
+    output_path: str,
+    checkpoint_path: str,
     N: int,
     N_thr_min: int,
     N_thr_max: int,
     alpha_init: float,
-    reference: xarray.Dataset,
-    mask: Array,
-    observed_variables: List[str],
-    sigma_y: Array,
-    x0: xarray.Dataset,
-    forcings: xarray.Dataset,
-    target_template: xarray.Dataset,
-    ckpt: gencast.CheckPoint,
-    task_config: graphcast.TaskConfig,
-    denoiser_config: denoiser.DenoiserArchitectureConfig,
-    noise_encoder_config: denoiser.NoiseEncoderConfig,
+    mask_sat_path: Union[str, None],
+    mask_ws_path: Union[str, None],
+    observed_variables_sat: Union[List[str], None],
+    observed_variables_ws: Union[List[str], None],
+    sigma_y_sat_path: Union[str, None],
+    sigma_y_ws_path: Union[str, None],
     sampler: str,
     sampler_config: Union[Dict, gencast.SamplerConfig],
-    std_z: xarray.Dataset,
-    min_x: xarray.Dataset,
-    std_x: xarray.Dataset,
-    mean_x: xarray.Dataset,
-    noise_levels: Array,
+    std_z_path: str,
+    min_x_path: str,
+    std_x_path: str,
+    mean_x_path: str,
     max_iter_alpha: int,
     solver: str,
     max_iter_solver: int,
     tol_solver: float,
 ):
-    r"""
+    """
     Do filtering with the Fully-Adapted Auxiliary Particle Filter (FA-APF)
     Input(s)
-        - filter_path (str): path of the filter
+        - data_path (str): path to the reference from which observations will be extracted
+        - output_path (str): path to save the particles for each time step
+        - checkpoint_path (str): path to the checkpoint (model) to use
         - N (int): number of particles
         - N_thr_min (int): minimum number of efficient particles
         - N_thr_max (int): maximum number of efficient particles
         - alpha_init (float): first inflation coefficient
-        - reference (xarray.Dataset): reference trajectory from which observations are taken with dimension (batch=1, time=n, lat=181, lon=360, levels=13)
-        - mask (Array): mask used to do subsampling with dimension (181, 360)
-        - observed_variables (List[str]): ordered list of observed variables
-        - sigma_y (Array): covariance matrix of normalized observations Sigma_{hat{y}} with dimension (len(observed_variables),)
-        - x0 (xarray.Dataset): initial condition/first state of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
-        - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser with dimension (batch=1, time=n, lat=181, lon=360, levels=13)
-        - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=n, lat=181, lon=360, levels=13)
-        - ckpt (gencast.CheckPoint): checkpoint to use
-        - task_config (graphcast.TaskConfig)
-        - denoiser_config (denoiser.DenoiserArchitectureConfig)
-        - noise_encoder_config (denoiser.NoiseEncoderConfig)
-        - sampler (str): sampler to use
-        - sampler_config (Union[Any, gencast.SamplerConfig])
-        - std_z (xarray.Dataset): standard deviations of residuals
-        - min_x (xarray.Dataset): minimum values of unnnormalized states
-        - std_x (xarray.Dataset): standard deviation of unnormalized states
-        - mean_x (xarray.Dataset): mean of unnnormalized states
-        - noise_levels (Array): array containing noise levels used during sampling
+        - mask_sat_path (str): path to satellite mask
+        - mask_ws_path (str): path to ground weather stations mask
+        - observed_variables_sat (str): ordered list of variables observed by satellite
+        - observed_variables_ws (str): ordered list of variables observed by ground weather stations
+        - sigma_y_sat_path (str): path to the covariance matrix of unnormalized satellite observations (with dimension (len(observed_variables_sat), 13)))
+        - sigma_y_ws_path (str): path to the covariance matrix of unnormalized ground observations (with dimension (len(observed_variables_ws),)
+        - sampler (str): sampler to use during the reverse diffusion process
+        - sampler_config (Union[Dict, gencast.SamplerConfig]): configuration of the sampler
+        - min_x_path (str): path to min_x statistic
+        - std_x_path (str): path to std_x statistic
+        - std_z_path (str): path to std_z statistic
+        - mean_x_path (str): path to mean_x statistic
         - max_iter_alpha (int): maximum number of iterations to do when looking for a decent inflation factor
         - solver (str): solver to use in MMPS iterations
         - max_iter_solver (int): maximum number of iterations to do when solving the system in MMPS
         - tol_solver (float): numerical tolerance used in the MMPS solver
     """
+    # Load the checkpoint
+    with open(checkpoint_path, "rb") as file:
+        ckpt = checkpoint.load(file, gencast.CheckPoint)
+
+    # Load statistics
+    with open(std_x_path, "rb") as file:
+        std_x = xarray.load_dataset(file, decode_timedelta=True).compute()
+    with open(std_z_path, "rb") as file:
+        std_z = xarray.load_dataset(file, decode_timedelta=True).compute()
+    with open(mean_x_path, "rb") as file:
+        mean_x = xarray.load_dataset(file, decode_timedelta=True).compute()
+    with open(min_x_path, "rb") as file:
+        min_x = xarray.load_dataset(file, decode_timedelta=True).compute()
+
+    # Inputs, targets and forcings
+    with open(data_path, "rb") as file:
+        data = xarray.load_dataset(file, decode_timedelta=True).compute()
+    x0, targets, forcings = data_utils.extract_inputs_targets_forcings(
+        data,
+        target_lead_times=slice("12h", f"{(data.sizes['time'] - 2) * 12}h"),
+        **dataclasses.asdict(ckpt.task_config),
+    )
+    del data
+    gc.collect()
+
+    # Prepare the sampler config
+    if sampler == "dpm":
+        sampler_config = ckpt.sampler_config
+        noise_levels = samplers_utils.noise_schedule(
+            max_noise_level=88.0,
+            min_noise_level=2e-5,
+            num_noise_levels=32,
+            rho=6.0,
+        )
+    else:
+        noise_levels = samplers_utils.noise_schedule(
+            max_noise_level=float(sampler_config["max_noise_level"]),
+            min_noise_level=float(sampler_config["min_noise_level"]),
+            num_noise_levels=int(sampler_config["num_noise_levels"]),
+            rho=float(sampler_config["rho"]),
+        )
+        sampler_config["noise_levels"] = noise_levels
+        _ = sampler_config.pop("max_noise_level")
+        _ = sampler_config.pop("min_noise_level")
+        _ = sampler_config.pop("num_noise_levels")
+        _ = sampler_config.pop("rho")
+
+    # Modify denoiser configuration for GPU
+    denoiser_architecture_config = ckpt.denoiser_architecture_config
+    denoiser_architecture_config.sparse_transformer_config.mask_type = "full"
+    denoiser_architecture_config.sparse_transformer_config.attention_type = "triblockdiag_mha"
+
+    # Load masks
+    if mask_sat_path is not None:
+        mask_sat = jnp.array(np.load(mask_sat_path).astype(bool))
+        if len(mask_sat.shape) == 3:
+            mask_sat = mask_sat[0, :]
+    if mask_ws_path is not None:
+        mask_ws = jnp.array(np.load(mask_ws_path).astype(bool))
+
+    # Load unnormalized covariance matrix
+    if sigma_y_sat_path is not None:
+        sigma_y_sat = jnp.array(np.load(sigma_y_sat_path).astype(jnp.float32))
+    if sigma_y_ws_path is not None:
+        sigma_y_ws = jnp.array(np.load(sigma_y_ws_path).astype(jnp.float32))
+
+    # Normalized observations covariance matrix
+    sigma_hat_y = utils.normalized_observation_covariance(
+        std_x=std_x,
+        mask_satellite=mask_sat,
+        mask_weather_stations=mask_ws,
+        sigma_y_satellite=sigma_y_sat,
+        sigma_y_weather_stations=sigma_y_ws,
+        observed_variables_satellite=observed_variables_sat,
+        observed_variables_weather_stations=observed_variables_ws,
+    )
+
     # Get the number of steps to do
-    num_steps = target_template.sizes["time"]
+    num_steps = targets.sizes["time"]
     assert num_steps == forcings.sizes["time"]
-    assert num_steps == reference.sizes["time"]
 
     # Duplicate initial conditions
-    ic_folder = Path(filter_path + "/0/")
+    if output_path[-1] == "/":
+        ic_folder = Path(output_path + str("0/"))
+    else:
+        ic_folder = Path(output_path + str("/0/"))
     ic_folder.mkdir(parents=True, exist_ok=True)
     for i in range(1, N + 1):
-        file_name = filter_path + "/0/" + str(i) + ".nc"
-        x0.to_netcdf(file_name)
-
-    # Ignore warnings of GenCast (about sparsity)
-    warnings.filterwarnings("ignore")
+        if output_path[-1] == "/":
+            file_name = output_path + str("0/") + str(i) + str(".nc")
+        else:
+            file_name = output_path + str("/0/") + str(i) + str(".nc")
+        x0.to_netcdf(file_name, format="NETCDF4", engine="netcdf4")
 
     # Loop on the number of steps
     for i in range(1, num_steps + 1):
         # Define previous and new particles path
         print("Step n°{}".format(i))
-        previous_particles_path = filter_path + "/" + str(i - 1) + "/"
-        new_particles_path = filter_path + "/" + str(i) + "/"
+        if output_path[-1] == "/":
+            previous_particles_path = output_path + str(i - 1) + str("/")
+            new_particles_path = output_path + str(i) + str("/")
+        else:
+            previous_particles_path = output_path + str("/") + str(i - 1) + str("/")
+            new_particles_path = output_path + str("/") + str(i) + str("/")
 
         # Create the new particles folder
         new_folder = Path(new_particles_path)
@@ -867,32 +965,25 @@ def filtering(
         else:
             # Get current forcings and template
             current_forcings = forcings.isel(time=[i - 1])
-            current_template = target_template.isel(time=[i - 1])
+            current_template = targets.isel(time=[i - 1])
 
-            # Extract observations
-            current_observations = reference.isel(time=[i - 1])
-            current_observations = utils.normalize(current_observations, std_x, mean_x)
-            current_observations = current_observations[observed_variables]
-            current_observations = utils.convert_xarray_to_jax(current_observations, False)
-            current_observations = jnp.array(current_observations)
-            current_observations = current_observations[:, mask, :]
-            current_observations = current_observations.reshape((
-                current_observations.shape[0],
-                -1,
-            ))
+            # Flip the satellite mask
+            if (mask_sat_path is not None) and ((i % 2) == 0):
+                mask_sat_step = jnp.flip(mask_sat, axis=0)
+            else:
+                mask_sat_step = mask_sat
 
-            # Add noise to the observation
-            num_stations = jnp.count_nonzero(mask)
-            std_y = jnp.sqrt(sigma_y)
-            std_y = jnp.tile(sigma_y, (num_stations, 1))
-            std_y = std_y[None, :, :]
-            eps = np.random.randn(*std_y.shape)
-            eps = std_y * eps
-            eps = eps.reshape((
-                eps.shape[0],
-                -1,
-            ))
-            current_observations += eps
+            # Draw an observation
+            current_observations = utils.draw_normalized_observations(
+                x=current_template,
+                std_x=std_x,
+                mean_x=mean_x,
+                sigma_y=sigma_hat_y,
+                mask_satellite=mask_sat_step,
+                mask_weather_stations=mask_ws,
+                observed_variables_satellite=observed_variables_sat,
+                observed_variables_weather_stations=observed_variables_ws,
+            )
 
             # Apply the step function
             step(
@@ -904,15 +995,17 @@ def filtering(
                 N_thr_max=N_thr_max,
                 alpha_init=alpha_init,
                 observations=current_observations,
-                mask=mask,
-                observed_variables=observed_variables,
-                sigma_y=sigma_y,
+                mask_sat=mask_sat_step,
+                mask_ws=mask_ws,
+                observed_variables_sat=observed_variables_sat,
+                observed_variables_ws=observed_variables_ws,
+                sigma_y=sigma_hat_y,
                 forcings=current_forcings,
                 target_template=current_template,
                 ckpt=ckpt,
-                task_config=task_config,
-                denoiser_config=denoiser_config,
-                noise_encoder_config=noise_encoder_config,
+                task_config=ckpt.task_config,
+                denoiser_config=denoiser_architecture_config,
+                noise_encoder_config=ckpt.noise_encoder_config,
                 sampler=sampler,
                 sampler_config=sampler_config,
                 std_z=std_z,
