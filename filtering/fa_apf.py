@@ -32,8 +32,10 @@ def weighting(
     alpha_init: float,
     previous_particle_path: str,
     observations: Array,
-    mask: Array,
-    observed_variables: List[str],
+    mask_sat: Union[Array, None],
+    mask_ws: Union[Array, None],
+    observed_variables_sat: Union[List[str], None],
+    observed_variables_ws: Union[List[str], None],
     sigma_y: Array,
     forcings: xarray.Dataset,
     target_template: xarray.Dataset,
@@ -56,10 +58,12 @@ def weighting(
         - N_thr_max (int): maximum number of efficient particles
         - alpha_init (float): first inflation coefficient
         - previous_particle_path (str): path to particles at time k
-        - observations (Array): normalized observations of the true state of the system at time k with dimension (batch=1, num_stations * len(self.observed_variables))
-        - mask (Array): mask used to do subsampling with dimension (181, 360)
-        - observed_variables (List[str]): ordered list of observed variables
-        - sigma_y (Array): covariance matrix of normalized observations Sigma_{y} with dimension (len(observed_variables),)
+        - observation (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
+        - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
+        - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+        - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
+        - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser
         - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
         - ckpt (gencast.CheckPoint): checkpoint to use
@@ -71,7 +75,7 @@ def weighting(
         - std_x (xarray.Dataset): standard deviation of unnormalized states
         - mean_x (xarray.Dataset): mean of unnnormalized states
         - noise_levels (Array): array containing noise levels used during sampling
-        - max_iter (int): maximum number of iterations to do when looking for a decent inflation factor
+        - max_iter (int): maximum number of iterations to do when looking for a decent inflation coefficient
     Returns
         - alpha (float): inflation factor used to compute normalized log pseudo-weights
         - tilde_w (Array): normalized log pseudo-weights [log(tilde{w}^{k+1}_{(1)}), ..., log(tilde{w}^{k+1}_{(N)})] with dimension (N,)
@@ -91,13 +95,13 @@ def weighting(
         mean_x: xarray.Dataset,
         noise_levels: Array,
     ) -> xarray.Dataset:
-        r"""
+        """
         Estimate E[x^{k+1} | hat{x}^{k}_{(i)}] in order to approximate p(hat{y}^{k+1} | x^{k}_{(i)})
         Input(s)
             - task_config (graphcast.TaskConfig)
             - denoiser_architecture_config (denoiser.DenoiserArchitectureConfig)
             - noise_encoder_config (denoiser.NoiseEncoderConfig)
-            - inputs (xarray.Dataset): unnormalized previous states x^{k}_{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            - inputs (xarray.Dataset): unnormalized previous state x^{k}_{(i)} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
             - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser
             - std_z (xarray.Dataset): standard deviations of residuals
@@ -154,11 +158,6 @@ def weighting(
             mean_x=mean_x,
         )
 
-        # 7) Reintroduce NaNs in the prediction
-        estimation = utils.reintroduce_nans(
-            old_inputs=inputs, predictions=estimation, variable=variable_to_clean
-        )
-
         return estimation
 
     # Jitted version of the function
@@ -184,49 +183,105 @@ def weighting(
     # pmap version to run in parallel
     estimate_expectation_pmap = xarray_jax.pmap(estimate_expectation_jitted, dim="sample")
 
+    def observation_operator(
+        x: Array,
+        mask_sat: Union[Array, None],
+        mask_ws: Union[Array, None],
+        observed_variables_sat: Union[List[str], None],
+        observed_variables_ws: Union[List[str], None],
+        std_x: xarray.Dataset,
+        mean_x: xarray.Dataset,
+    ) -> Array:
+        """
+        Apply the observation operator H on a given input x.
+        Input(s)
+            - x (Array): input of the observation operator, an estimation of E[x^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}] in the following
+            - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
+            - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+            - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
+            - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+            - std_x (xarray.Dataset): standard deviation of unnormalized states
+            - mean_x (xarray.Dataset): mean of unnnormalized states
+        Returns
+            - observations (Array): H(x) as jnp.ndarray with dimensions (batch=1, num_observed_variables)
+        """
+        # Normalize the array
+        x = utils.normalize(values=x, scales=std_x, locations=mean_x)
+
+        # Extract observation from weather stations
+        if (observed_variables_ws is not None) and (mask_ws is not None):
+            obs_weather_stations = x[observed_variables_ws]
+            obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations)
+            obs_weather_stations = obs_weather_stations[:, mask_ws, :]
+            obs_weather_stations = obs_weather_stations.reshape((
+                obs_weather_stations.shape[0],
+                -1,
+            ))
+        else:
+            obs_weather_stations = jnp.array([[]])
+
+        # Extract observation from satellite
+        if (observed_variables_sat is not None) and (mask_sat is not None):
+            obs_satellite = x[observed_variables_sat]
+            obs_satellite = utils.convert_xarray_to_jax(obs_satellite)
+            obs_satellite = obs_satellite[:, mask_sat, :]
+            obs_satellite = obs_satellite.reshape((
+                obs_satellite.shape[0],
+                -1,
+            ))
+        else:
+            obs_satellite = jnp.array([[]])
+
+        # Concatenate observations from ground stations and satellite
+        observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
+
+        return observations
+
     def compute_unnormalized_pseudo_weights(
         observations: Array,
-        mask: Array,
-        observed_variables: List[str],
+        mask_sat: Union[Array, None],
+        mask_ws: Union[Array, None],
+        observed_variables_sat: Union[List[str], None],
+        observed_variables_ws: Union[List[str], None],
         sigma_y: Array,
         std_x: xarray.Dataset,
         mean_x: xarray.Dataset,
         alpha: float,
         expectation: xarray.Dataset,
     ) -> float:
-        r"""
+        """
         Compute the unnormalized log pseudo-weights given an estimation of E[x^{k+1} | x^{k}_{(i)}]
         These weights are referred to as “pseudo-weights” because the covariance matrix of normalized observations is modified (inflation)
         Input(s)
-            - observation (Array): normalized observation at next time step (k+1) with dimension (batch=1, num_stations * len(self.observed_variables))
-            - mask (Array): mask used to do subsampling with dimension (181, 360)
-            - observed_variables (List[str]): ordered list of observed variables
-            - sigma_y (Array): covariance matrix of normalized observations Sigma_{y} with dimension (len(observed_variables),)
+            - observation (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
+            - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
+            - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+            - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
+            - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+            - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
             - std_x (xarray.Dataset): standard deviation of unnormalized states
             - mean_x (xarray.Dataset): mean of unnnormalized states
-            - alpha (float): inflation factor
+            - alpha (float): inflation coefficient
             - expectation (xarray.Dataset): an estimation of E[x^{k+1} | hat{x}^{k}_{(i)}] with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
         Returns
             - hat_tilde_w (float): unnormalized log pseudo-weight for ancestor x^{k}_{(i)}
         """
         # 1) Apply the observation operator H to the expectation
-        Hx = utils.normalize(values=expectation, scales=std_x, locations=mean_x)
-        Hx = Hx[observed_variables]
-        Hx = utils.convert_xarray_to_jax(Hx, False)
-        Hx = jnp.array(Hx)
-        Hx = Hx[:, mask, :]
-        Hx = Hx.reshape((
-            Hx.shape[0],
-            -1,
-        ))
+        Hx = observation_operator(
+            x=expectation,
+            mask_sat=mask_sat,
+            mask_ws=mask_ws,
+            observed_variables_sat=observed_variables_sat,
+            observed_variables_ws=observed_variables_ws,
+            std_x=std_x,
+            mean_x=mean_x,
+        )
 
         # 2) Get the difference between the observation and H(E[x^{k+1} | hat{x}^{k}_{(i)}])
         v = observations - Hx
 
         # 3) Apply inflation to Sigma_{y}
         tilde_sigma_y = (1.0 / alpha) * sigma_y
-        num_stations = observations.shape[-1] // tilde_sigma_y.shape[-1]
-        tilde_sigma_y = jnp.tile(tilde_sigma_y, num_stations).reshape((1, -1))
 
         # 4) Compute the unnormalize pseudo-weight
         hat_tilde_w = jnp.sum((1.0 / tilde_sigma_y) * (v**2))
@@ -248,7 +303,7 @@ def weighting(
         tilde_w = hat_tilde_w - jax.scipy.special.logsumexp(hat_tilde_w)
         return tilde_w
 
-    def compute_Neff(log_pseudo_weights: Array):
+    def compute_Neff(log_pseudo_weights: Array) -> float:
         """
         Compute the number of efficient particles given an array containing normalized log pseudo-weights
         Input(s)
@@ -261,34 +316,32 @@ def weighting(
         n_eff = n_eff.item()
         return n_eff
 
-    # Ignore warnings of GenCast (about sparsity)
-    warnings.filterwarnings("ignore")
-
     # 1) Estimate E[x^{k+1} | hat{x}^{k}_{(i)}] for each previous particle x^{k}_{(i)}
     print(" (Weighting)")
-    num_devices = len(jax.devices())
-    if N % num_devices == 0:
-        num_steps = N // num_devices
-    else:
-        num_steps = N // num_devices + 1
+    num_gpus = len([device for device in jax.devices() if device.platform == "gpu"])
+    assert int(N % num_gpus) == 0
+    num_steps = int(N // num_gpus)
 
     # Loop on the number steps
     expectation_estimations = []
     print("     Computation of expectations estimation...")
     for i in tqdm(range(1, num_steps + 1)):
-        samples = []
-        start_index = (i - 1) * num_devices + 1
 
         # Get a batch of particles to do the job in parallel
-        for index in range(start_index, min(start_index + num_devices, N + 1)):
-            particle_path = previous_particle_path + str(index) + ".nc"
+        samples = []
+        start_index = (i - 1) * num_gpus + 1
+        for index in range(start_index, min(start_index + num_gpus, N + 1)):
+            if previous_particle_path[-1] == '/':
+                particle_path = previous_particle_path + str(index) + str(".nc")
+            else:
+                particle_path = previous_particle_path + str('/') + str(index) + str(".nc")
             with open(particle_path, "rb") as file:
                 particle = xarray.load_dataset(file, decode_timedelta=True).compute()
             samples.append(particle)
 
         # Do computations in parallel
-        key = jax.random.PRNGKey(np.random.randint(i * 1_000))
-        keys = jax.random.split(key, num_devices)
+        key = jax.random.PRNGKey(np.random.randint(100_000))
+        keys = jax.random.split(key, num_gpus)
         samples = xarray.concat(
             samples, dim=xarray.DataArray([j for j in range(len(samples))], dims="sample")
         )
@@ -303,7 +356,7 @@ def weighting(
 
     # 2) Find the best inflation factor alpha
     print("     Looking for a decent inflation factor...")
-    alpha_min, alpha_max, alpha = 1e-10, 1.0, alpha_init
+    alpha_min, alpha_max, alpha = 1e-12, 1.0, alpha_init
     N_eff, num_iter = None, 0
     while num_iter < max_iter:
         # Compute unnormalized log pseudo-weights
@@ -312,13 +365,15 @@ def weighting(
             hat_tilde_w.append(
                 compute_unnormalized_pseudo_weights(
                     observations=observations,
-                    mask=mask,
-                    observed_variables=observed_variables,
+                    mask_sat=mask_sat,
+                    mask_ws=mask_ws,
+                    observed_variables_sat=observed_variables_sat,
+                    observed_variables_ws=observed_variables_ws,
                     sigma_y=sigma_y,
                     std_x=std_x,
                     mean_x=mean_x,
                     alpha=alpha,
-                    expectation=expectation_estimations[i],
+                    expectation=expectation_estimations[i]
                 )
             )
         hat_tilde_w = jnp.asarray(hat_tilde_w)

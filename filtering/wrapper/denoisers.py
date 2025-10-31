@@ -233,7 +233,7 @@ class ConditionalDenoiser:
             - x (Array): input of the observation operator, an estimation of E[x^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}] in the following
             - target_templates (xarray.Dataset): template used by utils.convert_jax_to_xarray
         Returns
-            - output (Array): H(x) as jnp.ndarray with dimensions (batch=1, num_observed_variables)
+            - observations (Array): H(x) as jnp.ndarray with dimensions (batch=1, num_observed_variables)
         """
         # Convert the x to an xarray
         x = utils.convert_jax_to_xarray(x, target_template)
