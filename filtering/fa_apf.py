@@ -958,7 +958,7 @@ def filtering(
 
         # Count the number of files
         existing_files = list(new_folder.glob("*.nc"))
-        if len(existing_files) == N:
+        if len(existing_files) >= N:
             print(
                 f"→ {N} particles are already present for step {i}, moving directly to step {i + 1}!"
             )
