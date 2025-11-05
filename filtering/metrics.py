@@ -23,7 +23,7 @@ def ensemble_mean(filter_path: str, metric_path: str, num_steps: int, num_partic
         os.path.isdir(os.path.join(filter_path, name)) and not name.startswith(".")
         for name in os.listdir(filter_path)
     )
-    assert num_folders == num_steps
+    assert num_folders == (num_steps + 1)
 
     # Check the number of particles
     if filter_path[-1] == "/":
@@ -76,7 +76,7 @@ def ensemble_mean(filter_path: str, metric_path: str, num_steps: int, num_partic
             file_path = metric_path + str(step) + str("/ensemble_mean.nc")
         else:
             file_path = metric_path + str("/") + str(step) + str("/ensemble_mean.nc")
-        ensemble_mean.to_netcdf(file_path)
+        ensemble_mean.to_netcdf(file_path, format='NETCDF4', engine='netcdf4')
 
 
 def skill(
@@ -112,7 +112,7 @@ def skill(
     )
 
     # Compute the skill (RMSE of the ensemble mean) for each step
-    for step in range(1, num_steps + 1):
+    for step in tqdm.tqdm(range(1, num_steps + 1)):
         # Load the ensemble mean and the correct ground truth step
         if metric_path[-1] == "/":
             ensemble_mean_path = metric_path + str(step) + str("/ensemble_mean.nc")
@@ -120,7 +120,7 @@ def skill(
             ensemble_mean_path = metric_path + str("/") + str(step) + str("/ensemble_mean.nc")
         with open(ensemble_mean_path, "rb") as file:
             ensemble_mean = xarray.load_dataset(file, decode_timedelta=True).compute()
-        gt_step = gt.isel(time=[step - 1])
+        gt_step = gt.isel(time=[int(step - 1)])
 
         # Compute the skill
         skill = (gt_step - ensemble_mean) ** 2
@@ -132,7 +132,7 @@ def skill(
             file_path = metric_path + str(step) + str("/skill.nc")
         else:
             file_path = metric_path + str("/") + str(step) + str("/skill.nc")
-        skill.to_netcdf(file_path)
+        skill.to_netcdf(file_path, format='NETCDF4', engine='netcdf4')
 
 
 def spread(
@@ -158,7 +158,7 @@ def spread(
         os.path.isdir(os.path.join(metric_path, name)) and not name.startswith(".")
         for name in os.listdir(metric_path)
     )
-    assert num_folders_filter == num_steps
+    assert num_folders_filter == (num_steps + 1)
     assert num_folders_metrics == num_steps
 
     # Check the number of particles
@@ -207,4 +207,51 @@ def spread(
             file_path = metric_path + str(step) + str("/spread.nc")
         else:
             file_path = metric_path + str("/") + str(step) + str("/spread.nc")
-        spread.to_netcdf(file_path)
+        spread.to_netcdf(file_path, format='NETCDF4', engine='netcdf4')
+
+
+def compute_metrics(
+    filter_path: str,
+    gt_path: str,
+    output_path: str,
+    checkpoint_path: str,
+    num_steps: int,
+    num_particles: int,
+):
+    """
+    Compute the metrics for (skill and spread) for a set of particles with equal weights
+    Input(s)
+        - filter_path (str): path to the result of the filter
+        - gt_path (str): path to the ground truth (an ERA5 trajectory)
+        - metric_path (str): path to save the metrics
+        - num_steps (int): number of assimilation steps performed by the filter
+        - num_particles (int): number of particles used by the filter
+    """
+    # Compute ensemble means
+    print("Compute ensemble means...")
+    ensemble_mean(
+        filter_path=filter_path,
+        metric_path=output_path,
+        num_steps=num_steps,
+        num_particles=num_particles,
+    )
+    print("")
+
+    # Compute skills
+    print("Compute skills...")
+    skill(
+        metric_path=output_path,
+        gt_path=gt_path,
+        checkpoint_path=checkpoint_path,
+        num_steps=num_steps,
+    )
+    print("")
+
+    # Compute spreads
+    print("Compute spreads...")
+    spread(
+        filter_path=filter_path,
+        metric_path=output_path,
+        num_steps=num_steps,
+        num_particles=num_particles,
+    )
