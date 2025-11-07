@@ -1,0 +1,65 @@
+# Number of filtering steps
+num_steps: !!int 30
+
+# Paths
+unconditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/unconditional/"
+idealist_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/idealist/"
+realistic_path: None
+gt_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
+checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/checkpoints/gencast_1deg.npz"
+output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/2019_03/idealist/"
+
+# First plot
+variables_first_plot:
+    - "10m_u_component_of_wind"
+    - "2m_temperature"
+    - "mean_sea_level_pressure"
+num_row_first_plot: !!int 1
+num_col_first_plot: !!int 3
+title_first_plot: !!str "Skill (Ensemble mean RMSE)"
+figsize_first_plot:
+    width: !!int 15
+    height: !!int 4
+ylabels_first_plot:
+    - "10m U wind component $[\text{m}/\text{s}]$"
+    - "2m temperature $[\text{K}]$"
+    - "Mean sea level pressure $[\text{Pa}]$"
+
+# Second plot
+variables_second_plot:
+    - "geopotential"
+    - "specific_humidity"
+    - "temperature"
+    - "v_component_of_wind"
+levels_second_plot:
+    - 100
+    - 250
+    - 850
+title_second_plot: !!str "Skill for geopotential, humidity, temperature and V wind component at three different pressure levels"
+figsize_second_plot:
+    width: !!int 15
+    height: !!int 12
+ylabels_second_plot:
+    - "Geopotential $[m^{2}/s^{2}]$"
+    - "Specific humidity $[kg/kg]$"
+    - "Temperature $[K]$"
+    - "V wind component $[m/s]$"
+
+# Third plot
+filter_third_plot: !!str "idealist"
+time_steps_third_plot:
+    - 5
+    - 13
+    - 29
+time_steps_titles_third_plot:
+    - "+3 days"
+    - "+7 days"
+    - "+15 days"
+variables_third_plot:
+    - "geopotential"
+    - "2m_temperature"
+    - "10m_u_component_of_wind"
+levels_variable_third_plot:
+    - 500
+    - None
+    - None
