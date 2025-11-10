@@ -76,7 +76,7 @@ def ensemble_mean(filter_path: str, metric_path: str, num_steps: int, num_partic
             file_path = metric_path + str(step) + str("/ensemble_mean.nc")
         else:
             file_path = metric_path + str("/") + str(step) + str("/ensemble_mean.nc")
-        ensemble_mean.to_netcdf(file_path, format='NETCDF4', engine='netcdf4')
+        ensemble_mean.to_netcdf(file_path, format="NETCDF4", engine="netcdf4")
 
 
 def skill(
@@ -132,7 +132,7 @@ def skill(
             file_path = metric_path + str(step) + str("/skill.nc")
         else:
             file_path = metric_path + str("/") + str(step) + str("/skill.nc")
-        skill.to_netcdf(file_path, format='NETCDF4', engine='netcdf4')
+        skill.to_netcdf(file_path, format="NETCDF4", engine="netcdf4")
 
 
 def spread(
@@ -207,7 +207,7 @@ def spread(
             file_path = metric_path + str(step) + str("/spread.nc")
         else:
             file_path = metric_path + str("/") + str(step) + str("/spread.nc")
-        spread.to_netcdf(file_path, format='NETCDF4', engine='netcdf4')
+        spread.to_netcdf(file_path, format="NETCDF4", engine="netcdf4")
 
 
 def compute_metrics(

@@ -1,9 +1,9 @@
 # Number of samples to generate
-num_samples: !!int 1
+num_samples: !!int 512
 
 # Data paths
-conditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/test/conditional/"
-unconditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/test/unconditional/"
+conditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/all_variables/"
+unconditional_output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/unconditional/"
 data_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
 
 # Checkpoint path
@@ -33,7 +33,10 @@ mask_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast
 
 # Observed variables (observations)
 observed_variables_sat:
+  - "geopotential"
   - "temperature"
+  - "u_component_of_wind"
+  - "v_component_of_wind"
 observed_variables_ws:
   - "10m_u_component_of_wind"
   - "10m_v_component_of_wind"
@@ -42,10 +45,11 @@ observed_variables_ws:
   - "sea_surface_temperature"
 
 # Covariance matrix of unnormalized observations
-sigma_y_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/satellite.npy"
+sigma_y_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/satellite_all_variables.npy"
 sigma_y_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/weather_stations.npy"
 
 # MMPS Solver
 solver: !!str "bicgstab"
-max_iter: !!int 3
-tol: !!float 1e-10
+max_iter: !!int 2
+tol: !!float 1e-8
+warm_start: !!bool True

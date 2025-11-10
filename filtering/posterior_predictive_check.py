@@ -120,6 +120,7 @@ def conditional_sampling(
     solver: str = None,
     max_iter: int = None,
     tol: float = None,
+    warm_start: bool = None,
 ) -> xarray.Dataset:
     """
     Draw a sample from p(x^{k+1} | x^{k}, y^{k+1}).
@@ -145,6 +146,7 @@ def conditional_sampling(
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
         - tol (float): numerical tolerance used in the MMPS solver
+        - warm_start (bool): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
     Returns
         - sample (xarray.Dataset): a sample drawn from p(x^{k+1} | x^{k}, y^{k+1})
     """
@@ -168,11 +170,13 @@ def conditional_sampling(
 
     # Instanciate a sampler
     if sampler == "dpm":
-        _sampler = DPM_Sampler(denoiser=denoiser, sampler_config=sampler_config)
+        _sampler = DPM_Sampler(
+            denoiser=denoiser, sampler_config=sampler_config, warm_start=warm_start
+        )
     elif sampler == "ddim":
-        _sampler = DDIM_Sampler(denoiser=denoiser, **sampler_config)
+        _sampler = DDIM_Sampler(denoiser=denoiser, warm_start=warm_start, **sampler_config)
     elif sampler == "abs":
-        _sampler = ABSampler(denoiser=denoiser, **sampler_config)
+        _sampler = ABSampler(denoiser=denoiser, warm_start=warm_start, **sampler_config)
     else:
         raise ValueError(f"Unknown sampler «{sampler}». Choose between 'dpm', 'ddim' and 'abs'.")
 
@@ -250,6 +254,7 @@ def ppc(
     solver: str,
     max_iter: int,
     tol: float,
+    warm_start: bool,
 ):
     """
     Draw unconditional and conditional samples to latter generate observations with them.
@@ -273,6 +278,7 @@ def ppc(
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
         - tol (float): numerical tolerance used in the MMPS solver
+        - warm_start (bool): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
     """
     # Load the checkpoint
     with open(checkpoint_path, "rb") as file:
@@ -390,6 +396,7 @@ def ppc(
             solver=solver,
             max_iter=max_iter,
             tol=tol,
+            warm_start=warm_start,
         )[0]
     )
 

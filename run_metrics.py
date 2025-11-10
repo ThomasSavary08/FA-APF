@@ -10,10 +10,10 @@ with open(config_file_path, "r") as f:
 
 # Compute metrics
 metrics.compute_metrics(
-    filter_path=str(config['filter_path']),
-    gt_path=str(config['gt_path']),
-    output_path=str(config['output_path']),
-    checkpoint_path=str(config['checkpoint_path']),
-    num_steps=int(config['num_steps']),
-    num_particles=int(config['num_samples']),
+    filter_path=str(config["filter_path"]),
+    gt_path=str(config["gt_path"]),
+    output_path=str(config["output_path"]),
+    checkpoint_path=str(config["checkpoint_path"]),
+    num_steps=int(config["num_steps"]),
+    num_particles=int(config["num_samples"]),
 )

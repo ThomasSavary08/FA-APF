@@ -249,7 +249,6 @@ def plot_surface_data(
     # Plots
     fig, axs = plt.subplots(num_row, num_col, figsize=figsize, sharey=False)
     for ax, (data_unconditional, data_idealist, data_realistic, ylabel) in zip(axs, plots):
-
         # Custom ticks
         tick_positions, tick_labels = custom_ticks(len(data_unconditional))
         ax.set_xticks(tick_positions)
@@ -307,8 +306,9 @@ def plot_atmospheric_data(
         assert int(data_unconditional.sizes["time"]) == int(data_realistic.sizes["time"])
     assert len(variables) == len(ylabels)
 
-
-    fig, axs = plt.subplots(len(variables), len(levels), figsize=figsize, sharex=False, sharey=False)
+    fig, axs = plt.subplots(
+        len(variables), len(levels), figsize=figsize, sharex=False, sharey=False
+    )
 
     for i, variable in enumerate(variables):
         for j, level in enumerate(levels):
@@ -316,7 +316,9 @@ def plot_atmospheric_data(
 
             # Get the data for the variable and level of interest
             if data_unconditional is not None:
-                data_unconditional_variable = data_unconditional[variable].sel(level=int(level)).data[0]
+                data_unconditional_variable = (
+                    data_unconditional[variable].sel(level=int(level)).data[0]
+                )
             else:
                 data_unconditional_variable = None
             if data_idealist is not None:
@@ -365,7 +367,6 @@ def plot_atmospheric_data(
     plt.show()
 
 
-
 def get_metric(metric_path: str, num_steps: int) -> xarray.Dataset:
     """
     Load a metric computed at each time step for a filter
@@ -388,15 +389,15 @@ def get_metric(metric_path: str, num_steps: int) -> xarray.Dataset:
     ens_mean, skill, spread = [], [], []
     for step in range(1, num_steps + 1):
         # Define the common path
-        if metric_path[-1] == '/':
-            data_step_path = metric_path + str(step) + str('/')
+        if metric_path[-1] == "/":
+            data_step_path = metric_path + str(step) + str("/")
         else:
-            data_step_path = metric_path + str('/') + str(step) + str('/')
+            data_step_path = metric_path + str("/") + str(step) + str("/")
 
         # Define metrics path
-        ens_step_path = data_step_path + str('ensemble_mean.nc')
-        skill_step_path = data_step_path + str('skill.nc')
-        spread_step_path = data_step_path + str('spread.nc')
+        ens_step_path = data_step_path + str("ensemble_mean.nc")
+        skill_step_path = data_step_path + str("skill.nc")
+        spread_step_path = data_step_path + str("spread.nc")
 
         # Open the files
         with open(ens_step_path, "rb") as file:
@@ -484,10 +485,10 @@ def make_plots(
 
     # First figure: skill for surface variables
     print("Plot skill for surface variables...")
-    if output_path[-1] == '/':
-        first_figure_path = output_path + str('fig1.svg')
+    if output_path[-1] == "/":
+        first_figure_path = output_path + str("fig1.svg")
     else:
-        first_figure_path = output_path + str('/fig1.svg')
+        first_figure_path = output_path + str("/fig1.svg")
     plot_surface_data(
         output_path=first_figure_path,
         data_unconditional=skill_unconditional,
@@ -498,18 +499,18 @@ def make_plots(
         num_col=num_col_first_plot,
         title=title_first_plot,
         figsize=figsize_first_plot,
-        ylabels=ylabels_first_plot
+        ylabels=ylabels_first_plot,
     )
     print("")
 
     # Second and third figures: spread and skill for atmospheric variables
     print("Plot skill and spread for atmospheric variables...")
-    if output_path[-1] == '/':
-        second_figure_path = output_path + str('fig2.svg')
-        third_figure_path = output_path + str('fig3.svg')
+    if output_path[-1] == "/":
+        second_figure_path = output_path + str("fig2.svg")
+        third_figure_path = output_path + str("fig3.svg")
     else:
-        second_figure_path = output_path + str('/fig2.svg')
-        third_figure_path = output_path + str('/fig3.svg')
+        second_figure_path = output_path + str("/fig2.svg")
+        third_figure_path = output_path + str("/fig3.svg")
     plot_atmospheric_data(
         output_path=second_figure_path,
         data_unconditional=skill_unconditional,
@@ -542,14 +543,14 @@ def make_plots(
     else:
         ensemble_mean_filter = ens_realistic
     for i, variable in enumerate(variables_third_plot):
-        if (levels_third_plot[i] is not None) and (levels_third_plot[i] != 'None'):
+        if (levels_third_plot[i] is not None) and (levels_third_plot[i] != "None"):
             level = int(levels_third_plot[i])
         else:
             level = None
-        if output_path[-1] == '/':
-            figure_path = output_path + str('fig') + str(num_fig) + str('.svg')
+        if output_path[-1] == "/":
+            figure_path = output_path + str("fig") + str(num_fig) + str(".svg")
         else:
-            figure_path = output_path + str('/fig') + str(num_fig) + str('.svg')
+            figure_path = output_path + str("/fig") + str(num_fig) + str(".svg")
         plot_trajectories(
             savepath=figure_path,
             ground_truth=gt,
