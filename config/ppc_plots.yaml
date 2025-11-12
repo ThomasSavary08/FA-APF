@@ -1,6 +1,6 @@
 # Number of draws and samples
 num_samples: !!int 512
-num_draws: !!int 256
+num_draws: !!int 512
 
 # Eval_target path
 data_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
@@ -9,27 +9,26 @@ checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenC
 # Sample and output paths
 conditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/all_variables/"
 unconditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/unconditional/"
-output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/PPC/all_variables/unobserved/ppc_northern_europe.png"
+output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/PPC/all_variables/atmospheric/v_component_of_wind/africa.svg"
 
 # Variables
 variables:
-    - ["geopotential", 50]
-    - ["geopotential", 250]
-    - ["geopotential", 600]
-    - ["geopotential", 1000]
+    - ["v_component_of_wind", 50]
+    - ["v_component_of_wind", 250]
+    - ["v_component_of_wind", 600]
+    - ["v_component_of_wind", 1000]
 
 # Standard deviations
 stds:
-    geopotential:
-        50: !!float 100
-        250: !!float 100
-        600: !!float 100
-        1000: !!float 100
-
+    v_component_of_wind:
+        50: !!float 0.3
+        250: !!float 0.3
+        600: !!float 0.3
+        1000: !!float 0.3
 
 # (Latitude, Longitude)
-lat: !!int 62
-lon: !!int 25
+lat: !!int 8
+lon: !!int 47
 
 # Mask (observations)
 mask_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/mask/mask_sat_1.npy"
@@ -48,8 +47,8 @@ colors:
     - "blue"
     - "black"
 
-# Title
-title: !!str Posterior Predictive Check (PPC) for unobserved atmospheric variables (geopotential) at lat=62, lon=25 (Northern europe)
+# Titles
+title: !!str Posterior Predictive Check (PPC) for V component of wind (atmospheric variable) at lat=8, lon=47 (Africa)
 
 # Dimension of the plot
 plot_size:
