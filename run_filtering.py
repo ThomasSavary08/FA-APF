@@ -44,4 +44,5 @@ fa_apf.filtering(
     solver=str(config["solver"]),
     max_iter_solver=int(config["max_iter"]),
     tol_solver=float(config["tol"]),
+    warm_start=bool(config["warm_start"]),
 )

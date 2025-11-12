@@ -83,6 +83,7 @@ def draw_normalized_observations(
     x: xarray.Dataset,
     std_x: xarray.Dataset,
     mean_x: xarray.Dataset,
+    min_x: xarray.Dataset,
     sigma_y: Array,
     mask_satellite: Union[Array, None],
     mask_weather_stations: Union[Array, None],
@@ -95,6 +96,7 @@ def draw_normalized_observations(
         - x (xarray.Dataset): state of the system with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
         - std_x (xarray.Dataset): standard deviations of system states
         - mean_x (xarray.Dataset): means of system states
+        - min_x (xarray.Dataset): minimum values of unnnormalized states
         - sigma_y (Array): diagonal covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - mask_satellite (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
         - mask_weather_stations (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
@@ -103,6 +105,11 @@ def draw_normalized_observations(
     Returns
         observations (Array): a sample from p(hat{y}^{k} | x^{k})
     """
+     # Clean the Sea Surface Temperature (SST) variable for inputs and forcings
+    variable_to_clean = "sea_surface_temperature"
+    if variable_to_clean in x.keys():
+        x = clean_NaN(x, variable_to_clean, min_x[variable_to_clean])
+
     # Normalize the input state
     hat_x = normalize(values=x, scales=std_x, locations=mean_x)
 
