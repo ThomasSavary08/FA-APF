@@ -3,7 +3,7 @@ num_steps: !!int 30
 num_samples: !!int 256
 
 # Data paths
-filter_path: !!str "/gpfs/projects/acad/sail/GenCast/data/filtering/2019_03/idealist/"
-output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/idealist/"
+filter_path: !!str "/gpfs/projects/acad/sail/GenCast/data/filtering/2019_03/realistic/"
+output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/realistic/"
 gt_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
 checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/checkpoints/gencast_1deg.npz"

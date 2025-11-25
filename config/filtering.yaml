@@ -18,10 +18,7 @@ mask_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast
 
 # Observed variables (observations)
 observed_variables_sat:
-  - "geopotential"
   - "temperature"
-  - "u_component_of_wind"
-  - "v_component_of_wind"
 observed_variables_ws:
   - "10m_u_component_of_wind"
   - "10m_v_component_of_wind"
@@ -30,7 +27,7 @@ observed_variables_ws:
   - "sea_surface_temperature"
 
 # Covariance matrix of unnormalized observations
-sigma_y_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/satellite_all_variables.npy"
+sigma_y_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/satellite.npy"
 sigma_y_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/weather_stations.npy"
 
 # Sampler
@@ -43,7 +40,7 @@ sampler_config:
   order: !!int 3
   correction: !!bool True
   num_correction_steps: !!int 2
-  delta: !!float 0.25
+  delta: !!float 0.2
 
 # Stats path
 min_x_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/stats/min_x.nc"
@@ -54,5 +51,4 @@ mean_x_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/
 # MMPS Solver
 solver: !!str "bicgstab"
 max_iter: !!int 2
-tol: !!float 1e-8
-warm_start: !!bool True
+tol: !!float 1e-10

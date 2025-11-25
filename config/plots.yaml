@@ -4,10 +4,10 @@ num_steps: !!int 30
 # Paths
 unconditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/unconditional/"
 idealist_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/idealist/"
-realistic_path: None
+realistic_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/realistic/"
 gt_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
 checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/checkpoints/gencast_1deg.npz"
-output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/2019_03/idealist/"
+output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/2019_03/all/"
 
 # First plot
 variables_first_plot:
@@ -21,9 +21,9 @@ figsize_first_plot:
     width: !!int 15
     height: !!int 4
 ylabels_first_plot:
-    - "10m U wind component $[\text{m}/\text{s}]$"
-    - "2m temperature $[\text{K}]$"
-    - "Mean sea level pressure $[\text{Pa}]$"
+    - "10m U wind component [m/s]"
+    - "2m temperature [K]"
+    - "Mean sea level pressure [Pa]"
 
 # Second plot
 variables_second_plot:
@@ -36,6 +36,7 @@ levels_second_plot:
     - 250
     - 850
 title_second_plot: !!str "Skill for geopotential, humidity, temperature and V wind component at three different pressure levels"
+title_third_plot: !!str "Spread to skill ratio for geopotential, humidity, temperature and V wind component at three different pressure levels"
 figsize_second_plot:
     width: !!int 15
     height: !!int 12
@@ -46,7 +47,7 @@ ylabels_second_plot:
     - "V wind component $[m/s]$"
 
 # Third plot
-filter_third_plot: !!str "idealist"
+filter_third_plot: !!str "realistic"
 time_steps_third_plot:
     - 5
     - 13
@@ -60,6 +61,6 @@ variables_third_plot:
     - "2m_temperature"
     - "10m_u_component_of_wind"
 levels_variable_third_plot:
-    - 500
+    - 850
     - None
     - None

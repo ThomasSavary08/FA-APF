@@ -285,6 +285,7 @@ def plot_atmospheric_data(
     title: str,
     figsize: Tuple[int],
     ylabels: List[str],
+    draw_perfect_ratio: bool = False,
 ):
     """
     Function to plot data as a function of the lead time for different atmospheric variables
@@ -298,6 +299,7 @@ def plot_atmospheric_data(
         - title (str): global title of the figure
         - figsize (Tuple[int]): size of the figure
         - ylabels (List[str]): labels to use for the figure
+        - draw_perfect_ratio (bool): draw the perfect spread to skill ratio (y=1) on the figure as horizontal line.
     """
     # Ckecks
     if (data_idealist is not None) and (data_unconditional is not None):
@@ -346,7 +348,9 @@ def plot_atmospheric_data(
             if data_idealist_variable is not None:
                 ax.plot(data_idealist_variable, color="blue", label="FA-APF (Idealist)")
             if data_realistic_variable is not None:
-                ax.plot(data_idealist_variable, color="black", label="FA-APF (Realistic)")
+                ax.plot(data_realistic_variable, color="black", label="FA-APF (Realistic)")
+            if draw_perfect_ratio:
+                ax.axhline(1, color="red", linestyle="--", linewidth=1.5)
 
             # Labels of axis
             if j == 0:
@@ -383,7 +387,7 @@ def get_metric(metric_path: str, num_steps: int) -> xarray.Dataset:
         os.path.isdir(os.path.join(metric_path, name)) and not name.startswith(".")
         for name in os.listdir(metric_path)
     )
-    assert num_folders == num_steps
+    assert num_folders >= num_steps
 
     # Load the data
     ens_mean, skill, spread = [], [], []
@@ -440,6 +444,7 @@ def make_plots(
     variables_second_plot: List[str],
     levels_second_plot: List[str],
     title_second_plot: str,
+    title_third_plot: str,
     figsize_second_plot: Tuple[int],
     ylabels_second_plot: List[str],
     filter_third_plot: str,
@@ -460,7 +465,7 @@ def make_plots(
     )
 
     # Load the unconditional data
-    ens_unconditional, skill_unconditional, spread_unconditional = get_metric(
+    ens_unconditional, skill_unconditional, _ = get_metric(
         metric_path=unconditional_path,
         num_steps=num_steps,
     )
@@ -525,13 +530,14 @@ def make_plots(
     plot_atmospheric_data(
         output_path=third_figure_path,
         data_unconditional=None,
-        data_idealist=spread_idealist,
-        data_realistic=spread_realistic,
+        data_idealist=spread_idealist/skill_idealist,
+        data_realistic=spread_realistic/skill_realistic,
         variables=variables_second_plot,
         levels=levels_second_plot,
-        title=title_second_plot,
+        title=title_third_plot,
         figsize=figsize_second_plot,
         ylabels=ylabels_second_plot,
+        draw_perfect_ratio=True,
     )
     print("")
 

@@ -452,7 +452,6 @@ def sampling(
     solver: str,
     max_iter: int,
     tol: float,
-    warm_start: bool,
 ):
     """
     Sampling step: draw samples from p(x^{k+1} | x^{k}_{a^{k+1}_{(i)}}, hat{y}^{k+1})
@@ -481,7 +480,6 @@ def sampling(
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
         - tol (float): numerical tolerance used in the MMPS solver
-        - warm_start (bool): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
     """
 
     @hk.transform_with_state
@@ -507,7 +505,6 @@ def sampling(
         solver: str,
         max_iter: int,
         tol: float,
-        warm_start: bool,
     ) -> xarray.Dataset:
         """
         Draw a sample conditionally on an observation
@@ -533,7 +530,6 @@ def sampling(
             - solver (str): solver to use in MMPS iterations
             - max_iter (int): maximum number of iterations to do when solving the system in MMPS
             - tol (float): numerical tolerance used in the MMPS solver
-            - warm_start (bool): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
         Returns
             - sample (xarray.Dataset): a sample drawn from p(x^{k+1} | x^{k}_{a^{k+1}_(i)}, hat{y}^{k+1})
         """
@@ -557,11 +553,11 @@ def sampling(
 
         # Instanciate a sampler
         if sampler == "dpm":
-            _sampler = DPM_Sampler(denoiser=denoiser, warm_start=warm_start, sampler_config=sampler_config)
+            _sampler = DPM_Sampler(denoiser=denoiser, sampler_config=sampler_config)
         elif sampler == "ddim":
-            _sampler = DDIM_Sampler(denoiser=denoiser, warm_start=warm_start, **sampler_config)
+            _sampler = DDIM_Sampler(denoiser=denoiser, **sampler_config)
         elif sampler == "abs":
-            _sampler = ABSampler(denoiser=denoiser, warm_start=warm_start, **sampler_config)
+            _sampler = ABSampler(denoiser=denoiser, **sampler_config)
         else:
             raise ValueError(
                 f"Unknown sampler «{sampler}». Choose between 'dpm', 'ddim' and 'abs'."
@@ -611,7 +607,6 @@ def sampling(
             solver=solver,
             max_iter=max_iter,
             tol=tol,
-            warm_start=warm_start,
         )[0]
     )
 
@@ -707,7 +702,6 @@ def step(
     solver: str,
     max_iter_solver: int,
     tol_solver: float,
-    warm_start: bool,
 ):
     """
     - step_number (int): indice (k+1) of the time step
@@ -740,7 +734,6 @@ def step(
     - solver (str): solver to use in MMPS iterations
     - max_iter_solver (int): maximum number of iterations to do when solving the system in MMPS
     - tol_solver (float): numerical tolerance used in the MMPS solver
-    - warm_start (bool): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
     """
     # Compute the weights and get the indices for sampling
     if step_number > 1:
@@ -799,7 +792,6 @@ def step(
         solver=solver,
         max_iter=max_iter_solver,
         tol=tol_solver,
-        warm_start=warm_start,
     )
 
 
@@ -827,7 +819,6 @@ def filtering(
     solver: str,
     max_iter_solver: int,
     tol_solver: float,
-    warm_start: bool,
 ):
     """
     Do filtering with the Fully-Adapted Auxiliary Particle Filter (FA-APF)
@@ -855,7 +846,6 @@ def filtering(
         - solver (str): solver to use in MMPS iterations
         - max_iter_solver (int): maximum number of iterations to do when solving the system in MMPS
         - tol_solver (float): numerical tolerance used in the MMPS solver
-        - warm_start (bool): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
     """
     # Load the checkpoint
     with open(checkpoint_path, "rb") as file:
@@ -985,12 +975,6 @@ def filtering(
             current_forcings = forcings.isel(time=[i - 1])
             current_template = targets.isel(time=[i - 1])
 
-            # Flip the satellite mask
-            if (mask_sat_path is not None) and ((i % 2) == 0):
-                mask_sat_step = jnp.flip(mask_sat, axis=0)
-            else:
-                mask_sat_step = mask_sat
-
             # Draw an observation
             current_observations = utils.draw_normalized_observations(
                 x=current_template,
@@ -998,7 +982,7 @@ def filtering(
                 mean_x=mean_x,
                 min_x=min_x,
                 sigma_y=sigma_hat_y,
-                mask_satellite=mask_sat_step,
+                mask_satellite=mask_sat,
                 mask_weather_stations=mask_ws,
                 observed_variables_satellite=observed_variables_sat,
                 observed_variables_weather_stations=observed_variables_ws,
@@ -1014,7 +998,7 @@ def filtering(
                 N_thr_max=N_thr_max,
                 alpha_init=alpha_init,
                 observations=current_observations,
-                mask_sat=mask_sat_step,
+                mask_sat=mask_sat,
                 mask_ws=mask_ws,
                 observed_variables_sat=observed_variables_sat,
                 observed_variables_ws=observed_variables_ws,
@@ -1036,7 +1020,6 @@ def filtering(
                 solver=solver,
                 max_iter_solver=max_iter_solver,
                 tol_solver=tol_solver,
-                warm_start=warm_start,
             )
 
             # Free memory

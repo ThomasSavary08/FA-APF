@@ -227,6 +227,7 @@ def compute_metrics(
         - num_steps (int): number of assimilation steps performed by the filter
         - num_particles (int): number of particles used by the filter
     """
+    """
     # Compute ensemble means
     print("Compute ensemble means...")
     ensemble_mean(
@@ -246,6 +247,7 @@ def compute_metrics(
         num_steps=num_steps,
     )
     print("")
+    """
 
     # Compute spreads
     print("Compute spreads...")

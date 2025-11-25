@@ -4,7 +4,7 @@ import xarray
 
 from jax import Array  # type: ignore
 from jax import numpy as jnp  # type: ignore
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 from . import linalg, utils
 from .graphcast import (
@@ -277,9 +277,8 @@ class ConditionalDenoiser:
         noisy_targets: xarray.Dataset,
         noise_levels: xarray.DataArray,
         forcings: Optional[xarray.Dataset] = None,
-        x0: Optional[Array] = None,
         **kwargs,
-    ) -> Tuple[xarray.Dataset, Array]:
+    ) -> xarray.Dataset:
         """
         Call the conditional denoiser to estimate E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}].
         Input(s)
@@ -288,10 +287,8 @@ class ConditionalDenoiser:
             - noisy_targets (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             - noise_levels (xarray.Dataset): noise levels sigma_{t} in noisy targets such that Sigma_{t} = sigma_{t}^{2} * I
             - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
-            - x0 (Array): first guess to use when solving the linear system in MMPS with dimension (batch=1, num_observed_variables)
         Returns
             - output (xarray.Dataset): an estimation of E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
-            - v (Array): solution obtained by the solver with dimension (batch=1, num_observed_variables)
         """
         # Convert hat{z}^{k+1}_{t} from xarray_jax to jax
         hat_z_kp1_t = utils.convert_xarray_to_jax(noisy_targets)
@@ -317,11 +314,17 @@ class ConditionalDenoiser:
         )
         Ht = linalg.transpose(H, x_kp1)
 
-        # Compute the score of p(\hat{y}^{k+1}| hat{z}^{k+1}_{t},  hat{x}^{k})
+        # Linear map for the solver
         sigma_t = jnp.array(xarray_jax.unwrap_data(noise_levels))[..., None] ** 2
-        Ax = lambda v: self.sigma_y * v + sigma_t * H(*vjp(Ht(v)))
+        def Ax(v: Array) -> Array:
+            x = utils.convert_jax_to_xarray(*vjp(Ht(v)), noisy_targets)
+            x = utils.unnormalize(x, scales=self.std_z, locations=None)
+            x = utils.convert_xarray_to_jax(x)
+            return self.sigma_y * v + sigma_t * H(x)
+
+        # Compute the score of p(\hat{y}^{k+1}| hat{z}^{k+1}_{t},  hat{x}^{k})
         b = observations - y
-        v, _ = self.solver(A=Ax, b=b, x0=x0, tol=self.r_tol, maxiter=self.max_iter)
+        v, _ = self.solver(A=Ax, b=b, tol=self.r_tol, maxiter=self.max_iter)
         (score,) = vjp(Ht(v))
         score = utils.convert_jax_to_xarray(score, noisy_targets)
 
@@ -338,4 +341,4 @@ class ConditionalDenoiser:
 
         # Compute E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, \hat{y}^{k+1}]
         output = hat_z_kp1 + sigma_t * score
-        return output, v
+        return output

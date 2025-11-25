@@ -46,5 +46,4 @@ posterior_predictive_check.ppc(
     solver=str(config["solver"]),
     max_iter=int(config["max_iter"]),
     tol=float(config["tol"]),
-    warm_start=bool(config["warm_start"]),
 )

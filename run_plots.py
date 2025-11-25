@@ -46,6 +46,7 @@ plots.make_plots(
     variables_second_plot=list(config["variables_second_plot"]),
     levels_second_plot=list(config["levels_second_plot"]),
     title_second_plot=str(config["title_second_plot"]),
+    title_third_plot=str(config["title_third_plot"]),
     figsize_second_plot=figsize_second_plot,
     ylabels_second_plot=list(config["ylabels_second_plot"]),
     filter_third_plot=str(config["filter_third_plot"]),

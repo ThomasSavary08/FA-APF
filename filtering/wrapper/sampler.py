@@ -40,9 +40,8 @@ class Sampler(ABC):
         noisy_targets: xarray.Dataset,
         forcings: xarray.Dataset,
         observations: Optional[Array] = None,
-        x0: Optional[Array] = None,
-    ) -> Tuple[xarray.Dataset, Union[Array, None]]:
-        """
+    ) -> xarray.Dataset:
+        r"""
         Use the pre-trained denoiser to estimate E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
         or E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] if a normalized observation is given.
         Input(s)
@@ -51,12 +50,9 @@ class Sampler(ABC):
             - noisy_targets (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
             - observation (Optional[Array]): normalized observations from ground stations and/or satellites with dimension (batch=1, num_observed_variables)
-            - x0 (Array): first guess to use when solving the linear system in MMPS with dimension (batch=1, num_observed_variables)
         Returns
-            - output (Tuple[xarray.Dataset, Union[Array, None]]): an estimation of E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}] or
-            E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] with dimensions (batch=1, time=1, lat=181, lon=360, levels=13) and
-            the solution of the linear system in MMPS with dimensions (batch=1, num_observed_variables) for the conditional denoiser
-            (None for the classical denoiser).
+            - output (xarray.Dataset): an estimation of E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
+            or E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}, hat{y}^{k+1}] with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
         """
         bcast_noise = xarray_jax.DataArray(
             jnp.tile(noise_level, noisy_targets.sizes["batch"]), dims=("batch",)
@@ -68,17 +64,13 @@ class Sampler(ABC):
                 noisy_targets=noisy_targets,
                 noise_levels=bcast_noise,
                 forcings=forcings,
-                x0=x0,
             )
         else:
-            return (
-                self._denoiser(
-                    inputs=inputs,
-                    noisy_targets=noisy_targets,
-                    noise_levels=bcast_noise,
-                    forcings=forcings,
-                ),
-                None,
+            return self._denoiser(
+                inputs=inputs,
+                noisy_targets=noisy_targets,
+                noise_levels=bcast_noise,
+                forcings=forcings,
             )
 
     @abstractmethod
@@ -109,14 +101,12 @@ class DPM_Sampler(Sampler):
     Input(s)
         - denoiser (Union[ConditionalDenoiser, GenCastDenoiser])
         - sampler_config (gencast.SamplerConfig)
-        - warm_start (Optional[bool]): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
     """
 
     def __init__(
         self,
         denoiser: Union[ConditionalDenoiser, GenCastDenoiser],
         sampler_config: gencast.SamplerConfig,
-        warm_start: Optional[bool] = None,
     ):
         # Denoiser attribute
         super().__init__(denoiser)
@@ -136,7 +126,6 @@ class DPM_Sampler(Sampler):
             sampler_config.churn_max_noise_level,
         )
         self._noise_level_inflation_factor = sampler_config.noise_level_inflation_factor
-        self._warm_start = warm_start
 
     def __call__(
         self,
@@ -149,12 +138,12 @@ class DPM_Sampler(Sampler):
         """
         Sample residuals using the two normalized previous states of the system and observations from weather stations
         Input(s)
-            - inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
-            - targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
-            - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
-            - observations (Optional[Array]): normalized observations from ground stations and/or satellites with dimension (batch=1, num_observed_variables)
+            inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
+            forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
+            observations (Optional[Array]): normalized observations from ground stations and/or satellites with dimension (batch=1, num_observed_variables)
         Returns
-            - sample (xaray.Dataset): predicted residual (as xarray_jax) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
+            sample (xaray.Dataset): predicted residual (as xarray_jax) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
         """
         # Define dtype, noise_levels and churn_rates
         dtype = casting.infer_floating_dtype(targets_template)
@@ -162,40 +151,25 @@ class DPM_Sampler(Sampler):
         per_step_churn_rates = jnp.array(self._per_step_churn_rates).astype(dtype)
 
         # Partial function used in the body_fn
-        def denoiser(
-            noise_level: Array,
-            hat_z_t: xarray.Dataset,
-            x0: Optional[Array] = None,
-        ) -> Tuple[xarray.Dataset, Union[Array, None]]:
+        def denoiser(noise_level: Array, hat_z_t: xarray.Dataset) -> xarray.Dataset:
             return self.call_denoiser(
                 noise_level=noise_level,
                 inputs=inputs,
                 noisy_targets=hat_z_t,
                 forcings=forcings,
                 observations=observations,
-                x0=x0,
             )
 
         # One step of the DPM sampler
-        def body_fn(
-            i: Array,
-            data: Tuple[xarray.Dataset, Array],
-        ) -> Tuple[xarray.Dataset, Array]:
+        def body_fn(i: Array, hat_z_t: xarray.Dataset) -> xarray.Dataset:
             """
             One step of the DPM-Solver++ (https://arxiv.org/abs/2211.01095) sampling algorithm
             Input(s)
-                - i (Array): sampling iteration number
-                - data (Tuple[xarray.Dataset, Array]): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion
-                process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13) and first guess x0 to use when solving the
-                linear system in MMPS with dimension (batch=1, num_observed_variables).
+                i (Array): sampling iteration number
+                hat_z_t (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             Returns
-                - output (Tuple[xarray.Dataset, Array]): noisy_targets at iteration (t+1) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
-                and solution of the linear system at iteration t with dimension (batch=1, num_observed_variables)
+                hat_z_tp1 (xarray.Dataset): noisy_targets at iteration (i+1) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             """
-            # Unpack data
-            hat_z_t, x0 = data
-            if (not self._warm_start) or (self._warm_start is None):
-                x0 = None
 
             # Function to generate noise on the sphere with sigma{t=1} as standard deviation
             def init_noise(template):
@@ -220,26 +194,18 @@ class DPM_Sampler(Sampler):
             mid_noise_level = jnp.sqrt(noise_level * next_noise_level)
             mid_over_current = mid_noise_level / noise_level
 
-            hat_z, v = denoiser(noise_level, hat_z_t, x0)
+            hat_z = denoiser(noise_level, hat_z_t)
             z_mid = mid_over_current * hat_z_t + (1 - mid_over_current) * hat_z
 
             next_over_current = next_noise_level / noise_level
-            hat_z_mid, _ = denoiser(mid_noise_level, z_mid, x0)
+            hat_z_mid = denoiser(mid_noise_level, z_mid)
             hat_z_tp1 = next_over_current * hat_z_t + (1 - next_over_current) * hat_z_mid
 
-            # Prepare the output
-            next_target = samplers_utils.tree_where(next_noise_level == 0, hat_z, hat_z_tp1)
-            next_x0 = v if v is not None else jnp.zeros_like(observations)
-            output = (next_target, next_x0)
-
-            return output
+            return samplers_utils.tree_where(next_noise_level == 0, hat_z, hat_z_tp1)
 
         # Loop on the body_fn function to solve the reverse diffusion equation
-        noise_init, x0_init = xarray.zeros_like(targets_template), jnp.zeros_like(observations)
-        sample, _ = hk.fori_loop(
-            0, len(noise_levels) - 1, body_fun=body_fn, init_val=(noise_init, x0_init)
-        )
-        return sample
+        noise_init = xarray.zeros_like(targets_template)
+        return hk.fori_loop(0, len(noise_levels) - 1, body_fun=body_fn, init_val=noise_init)
 
 
 class DDIM_Sampler(Sampler):
@@ -252,7 +218,6 @@ class DDIM_Sampler(Sampler):
         - correction (bool): if True, correction steps are applied after the prediction step
         - num_correction_steps (Optional[int]): number of correction step to do
         - delta (Optional[float]): coefficient used in the correction step
-        - warm_start (Optional[bool]): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
     """
 
     def __init__(
@@ -263,7 +228,6 @@ class DDIM_Sampler(Sampler):
         correction: bool,
         num_correction_steps: Optional[int] = None,
         delta: Optional[float] = None,
-        warm_start: Optional[bool] = None,
     ):
         # Denoiser attribute
         super().__init__(denoiser)
@@ -280,7 +244,6 @@ class DDIM_Sampler(Sampler):
             self._delta = 0.25
         else:
             self._delta = delta
-        self._warm_start = warm_start
 
     def __call__(
         self,
@@ -293,52 +256,37 @@ class DDIM_Sampler(Sampler):
         """
         Sample residuals using the two normalized previous states of the system and observations from weather stations
         Input(s)
-            - inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
-            - targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
-            - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
-            - observations (Optional[Array]): normalized observations from ground stations and/or satellites with dimension (batch=1, num_observed_variables)
+            inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
+            forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
+            observations (Optional[Array]): normalized observations from ground stations and/or satellites with dimension (batch=1, num_observed_variables)
         Returns
-            - sample (xaray.Dataset): predicted residual (as xarray_jax) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
+            sample (xaray.Dataset): predicted residual (as xarray_jax) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
         """
         # Define dtype and noise_levels
         dtype = casting.infer_floating_dtype(targets_template)
         noise_levels = jnp.array(self._noise_levels).astype(dtype)
 
         # Partial function used in the body_fn
-        def denoiser(
-            noise_level: Array,
-            hat_z_t: xarray.Dataset,
-            x0: Optional[Array] = None,
-        ) -> Tuple[xarray.Dataset, Union[Array, None]]:
+        def denoiser(noise_level: Array, hat_z_t: xarray.Dataset) -> xarray.Dataset:
             return self.call_denoiser(
                 noise_level=noise_level,
                 inputs=inputs,
                 noisy_targets=hat_z_t,
                 forcings=forcings,
                 observations=observations,
-                x0=x0,
             )
 
         # One step of the DDIM sampler
-        def body_fn(
-            i: Array,
-            data: Tuple[xarray.Dataset, Array],
-        ) -> Tuple[xarray.Dataset, Array]:
+        def body_fn(i: Array, hat_z_t: xarray.Dataset) -> xarray.Dataset:
             """
             One step of the DDIM sampling algorithm (see https://azula.readthedocs.io/0.1.1/api/azula.sample.html#azula.sample.DDIMSampler)
             Input(s)
-                - i (Array): sampling iteration number
-                - data (Tuple[xarray.Dataset, Array): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion
-                process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13) and first guess x0 to use when solving the
-                linear system in MMPS with dimension (batch=1, num_observed_variables).
+                i (Array): sampling iteration number
+                hat_z_t (xarray.Dataset): noisy samples hat{z}^{k+1}_{t} at step t of the reverse diffusion process with dimensions (batch=1, time=1, lat=181, lon=360, levels=13)
             Returns
-                - output (Tuple[xarray.Dataset, Array]): noisy_targets at iteration (t+1) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
-                and solution of the linear system at iteration t with dimension (batch=1, num_observed_variables)
+                hat_z_tp1 (xarray.Dataset): noisy_targets at iteration (i+1) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
             """
-            # Unpack data
-            hat_z_t, x0 = data
-            if (not self._warm_start) or (self._warm_start is None):
-                x0 = None
 
             # Function to generate noise on the sphere with sigma{t=1} as standard deviation
             def init_noise(template):
@@ -357,7 +305,7 @@ class DDIM_Sampler(Sampler):
             tau = jnp.clip(self._eta * tau, 0.0, 1.0)
             eps = samplers_utils.spherical_white_noise_like(hat_z_t)
 
-            hat_z, v = denoiser(sigma_t, hat_z_t, x0)
+            hat_z = denoiser(sigma_t, hat_z_t)
 
             hat_z_tp1 = hat_z
             hat_z_tp1 = hat_z_tp1 + sigma_s * (jnp.sqrt(1.0 - tau) / sigma_t) * (hat_z_t - hat_z)
@@ -367,26 +315,15 @@ class DDIM_Sampler(Sampler):
             if self.apply_correction:
                 for _ in range(self._num_corr_steps):
                     eps = samplers_utils.spherical_white_noise_like(hat_z_tp1)
-                    s = (denoiser(sigma_s_safe, hat_z_tp1, x0)[0] - hat_z_tp1) / (sigma_s_safe**2)
+                    s = (denoiser(sigma_s_safe, hat_z_tp1) - hat_z_tp1) / (sigma_s_safe**2)
                     gamma = self._delta * (sigma_s_safe**2)
                     hat_z_tp1 = hat_z_tp1 + 0.5 * gamma * s + jnp.sqrt(gamma) * eps
 
-            # Prepare the output
-            next_target = samplers_utils.tree_where(sigma_s == 0, hat_z, hat_z_tp1)
-            next_x0 = v if v is not None else jnp.zeros_like(observations)
-            output = (next_target, next_x0)
-
-            return output
+            return samplers_utils.tree_where(sigma_s == 0, hat_z, hat_z_tp1)
 
         # Loop on the body_fn function to solve the reverse diffusion equation
-        noise_init, x0_init = xarray.zeros_like(targets_template), jnp.zeros_like(observations)
-        sample, _ = hk.fori_loop(
-            0,
-            len(noise_levels) - 1,
-            body_fun=body_fn,
-            init_val=(noise_init, x0_init),
-        )
-        return sample
+        noise_init = xarray.zeros_like(targets_template)
+        return hk.fori_loop(0, len(noise_levels) - 1, body_fun=body_fn, init_val=noise_init)
 
 
 class ABSampler(Sampler):
@@ -416,7 +353,6 @@ class ABSampler(Sampler):
         correction: bool,
         num_correction_steps: Optional[int] = None,
         delta: Optional[float] = None,
-        warm_start: Optional[bool] = None,
     ):
         """
         Adams-Bashforth multi-step sampler (aka LMS sampler).
@@ -427,7 +363,6 @@ class ABSampler(Sampler):
             - correction (bool): if True, correction steps are applied after the prediction step
             - num_correction_steps (Optional[int]): number of correction step to do
             - delta (Optional[float]): coefficient used in the correction step
-            - warm_start (Optional[bool]): do warm start (a.k.a starting guess) when solving the linear system in MMPS using the solution of the previous diffusion step
         """
         # Denoiser attribute
         super().__init__(denoiser)
@@ -455,7 +390,6 @@ class ABSampler(Sampler):
                     self.adams_bashforth_coeffs(self._noise_levels[: i + 2], self._order)
                 )
         self.coefficients = jnp.stack(self.coefficients, axis=0)
-        self._warm_start = warm_start
 
     def __call__(
         self,
@@ -468,48 +402,38 @@ class ABSampler(Sampler):
         """
         Sample residuals using the two normalized previous states of the system and observations from weather stations
         Input(s)
-            - inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
-            - targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
-            - forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
-            - observations (Optional[Array]): normalized observations from ground stations and/or satellites with dimension (batch=1, num_observed_variables)
+            inputs (xarray.Dataset): normalized previous states hat{x}^{k} of the system with dimension (batch=1, time=2, lat=181, lon=360, levels=13)
+            targets_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
+            forcings (xarray.Dataset): normalized forcing terms used by the GenCast denoiser
+            observations (Optional[Array]): normalized observations from ground stations and/or satellites with dimension (batch=1, num_observed_variables)
         Returns
-            - sample (xaray.Dataset): predicted residual (as xarray_jax) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
+            sample (xaray.Dataset): predicted residual (as xarray_jax) with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
         """
         # Define dtype and noise_levels
         dtype = casting.infer_floating_dtype(targets_template)
         noise_levels = jnp.array(self._noise_levels).astype(dtype)
 
         # Partial function used in the body_fn
-        def denoiser(
-            noise_level: Array,
-            hat_z_t: xarray.Dataset,
-            x0: Optional[Array] = None,
-        ) -> Tuple[xarray.Dataset, Union[Array, None]]:
+        def denoiser(noise_level: Array, hat_z_t: xarray.Dataset) -> xarray.Dataset:
             return self.call_denoiser(
                 noise_level=noise_level,
                 inputs=inputs,
                 noisy_targets=hat_z_t,
                 forcings=forcings,
                 observations=observations,
-                x0=x0,
             )
 
         def body_fn(
-            i: Array,
-            data: Tuple[xarray.Dataset, xarray.Dataset, Array],
-        ) -> Tuple[xarray.Dataset, xarray.Dataset, Array]:
+            i: Array, buf_and_state: Tuple[xarray.Dataset, xarray.Dataset]
+        ) -> Tuple[xarray.Dataset, xarray.Dataset]:
             """
             One step of the Adam-Bashforth method (see https://azula.readthedocs.io/stable/api/azula.sample.html#azula.sample.ABSampler)
             Input(s)
-                - i (Array): sampling iteration number
-                - data (Tuple[xarray.Dataset, xarray.Dataset, Array]): buffer, current residual and starting guess for MMPS
-            Returns
-                - output (Tuple[xarray.Dataset, xarray.Dataset, Array]): next buffer, next noisy targets and solution of the system
+                i (Array): sampling iteration number
+                buf_and_state (Tuple[xarray.Dataset, xarray.Dataset]): buffer and current residual
             """
             # Get the buffer and current residual
-            buf, hat_z_t, x0 = data
-            if (not self._warm_start) or (self._warm_start is None):
-                x0 = None
+            buf, hat_z_t = buf_and_state
 
             # Function to generate noise on the sphere with sigma{t=1} as standard deviation
             def init_noise(template):
@@ -521,7 +445,7 @@ class ABSampler(Sampler):
 
             # Use the denoiser to estimate hat_z
             sigma_t = noise_levels[i]
-            hat_z, v = denoiser(sigma_t, hat_z_t, x0)
+            hat_z = denoiser(sigma_t, hat_z_t)
             z_t = (hat_z_t - hat_z) / sigma_t
 
             # Update the buffer
@@ -547,26 +471,21 @@ class ABSampler(Sampler):
             if self.apply_correction:
                 for _ in range(self._num_corr_steps):
                     eps = samplers_utils.spherical_white_noise_like(hat_z_tp1_corrected)
-                    s = (
-                        denoiser(sigma_s_safe, hat_z_tp1_corrected, x0)[0] - hat_z_tp1_corrected
-                    ) / (sigma_s_safe**2)
+                    s = (denoiser(sigma_s_safe, hat_z_tp1_corrected) - hat_z_tp1_corrected) / (
+                        sigma_s_safe**2
+                    )
                     gamma = self._delta * (sigma_s_safe**2)
                     hat_z_tp1_corrected = (
                         hat_z_tp1_corrected + 0.5 * gamma * s + jnp.sqrt(gamma) * eps
                     )
 
-            # Prepare the output
-            next_target = samplers_utils.tree_where(sigma_s == 0, hat_z_tp1, hat_z_tp1_corrected)
-            next_x0 = v if v is not None else jnp.zeros_like(observations)
-            output = (buf, next_target, next_x0)
-
-            return output
+            return samplers_utils.tree_where(
+                sigma_s == 0, (buf, hat_z_tp1), (buf, hat_z_tp1_corrected)
+            )
 
         # Loop on the body_fn function to solve the reverse diffusion equation
         buffer_init = [xarray.zeros_like(targets_template) for _ in range(self._order)]
         buffer_init = xarray.concat(buffer_init, dim="batch")
-        noise_init, x0_init = xarray.zeros_like(targets_template), jnp.zeros_like(observations)
-        _, sample, _ = hk.fori_loop(
-            0, len(noise_levels) - 1, body_fun=body_fn, init_val=(buffer_init, noise_init, x0_init)
-        )
-        return sample
+        noise_init = xarray.zeros_like(targets_template)
+        _, hat_z = hk.fori_loop(0, len(noise_levels) - 1, body_fn, (buffer_init, noise_init))
+        return hat_z

@@ -9,26 +9,25 @@ checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenC
 # Sample and output paths
 conditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/all_variables/"
 unconditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/PPC/unconditional/"
-output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/PPC/all_variables/atmospheric/v_component_of_wind/africa.svg"
+output_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/images/PPC/surface/south_america.pdf"
 
 # Variables
 variables:
-    - ["v_component_of_wind", 50]
-    - ["v_component_of_wind", 250]
-    - ["v_component_of_wind", 600]
-    - ["v_component_of_wind", 1000]
+    - "10m_u_component_of_wind"
+    - "10m_v_component_of_wind"
+    - "2m_temperature"
+    - "mean_sea_level_pressure"
 
 # Standard deviations
 stds:
-    v_component_of_wind:
-        50: !!float 0.3
-        250: !!float 0.3
-        600: !!float 0.3
-        1000: !!float 0.3
+    10m_u_component_of_wind: 0.15
+    10m_v_component_of_wind: 0.15
+    2m_temperature: 0.05
+    mean_sea_level_pressure: 10.
 
 # (Latitude, Longitude)
-lat: !!int 8
-lon: !!int 47
+lat: !!int -16
+lon: !!int 312
 
 # Mask (observations)
 mask_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/mask/mask_sat_1.npy"
@@ -36,10 +35,10 @@ mask_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast
 
 # Labels
 xlabels:
-    - 'Level: 50 hPA'
-    - 'Level: 250 hPA'
-    - 'Level: 600 hPA'
-    - 'Level: 1000 hPA'
+    - '10m U wind component [m/s]'
+    - '10m V wind component [m/s]'
+    - '2m temperature [K]'
+    - 'Mean sea level pressure [Pa]'
 
 # Colors
 colors:
@@ -48,7 +47,7 @@ colors:
     - "black"
 
 # Titles
-title: !!str Posterior Predictive Check (PPC) for V component of wind (atmospheric variable) at lat=8, lon=47 (Africa)
+title: !!str Posterior Predictive Check (PPC) for surface variables at lat=-16, lon=312 (South America)
 
 # Dimension of the plot
 plot_size:
