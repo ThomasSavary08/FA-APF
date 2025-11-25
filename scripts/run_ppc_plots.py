@@ -4,7 +4,7 @@ import yaml
 from filtering import posterior_predictive_check
 
 # Load the configuration file
-config_file_path = "./config/ppc_plots.yaml"
+config_file_path = "./../config/ppc_plots.yaml"
 with open(config_file_path, "r") as f:
     config = yaml.safe_load(f)
 

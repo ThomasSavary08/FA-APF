@@ -15,7 +15,7 @@ from filtering import fa_apf
 warnings.filterwarnings("ignore")
 
 # Load the configuration file
-config_file_path = "./config/filtering.yaml"
+config_file_path = "./../config/filtering.yaml"
 with open(config_file_path, "r") as f:
     config = yaml.safe_load(f)
 

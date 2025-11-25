@@ -316,6 +316,7 @@ class ConditionalDenoiser:
 
         # Linear map for the solver
         sigma_t = jnp.array(xarray_jax.unwrap_data(noise_levels))[..., None] ** 2
+
         def Ax(v: Array) -> Array:
             x = utils.convert_jax_to_xarray(*vjp(Ht(v)), noisy_targets)
             x = utils.unnormalize(x, scales=self.std_z, locations=None)

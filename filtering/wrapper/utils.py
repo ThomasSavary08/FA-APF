@@ -105,7 +105,7 @@ def draw_normalized_observations(
     Returns
         observations (Array): a sample from p(hat{y}^{k} | x^{k})
     """
-     # Clean the Sea Surface Temperature (SST) variable for inputs and forcings
+    # Clean the Sea Surface Temperature (SST) variable for inputs and forcings
     variable_to_clean = "sea_surface_temperature"
     if variable_to_clean in x.keys():
         x = clean_NaN(x, variable_to_clean, min_x[variable_to_clean])

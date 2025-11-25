@@ -5,7 +5,7 @@ import yaml
 from filtering import plots
 
 # Load the configuration file
-config_file_path = "./config/plots.yaml"
+config_file_path = "./../config/plots.yaml"
 with open(config_file_path, "r") as f:
     config = yaml.safe_load(f)
 

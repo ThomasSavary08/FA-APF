@@ -15,7 +15,7 @@ from filtering import posterior_predictive_check
 warnings.filterwarnings("ignore")
 
 # Load the configuration file
-config_file_path = "./config/ppc.yaml"
+config_file_path = "./../config/ppc.yaml"
 with open(config_file_path, "r") as f:
     config = yaml.safe_load(f)
 

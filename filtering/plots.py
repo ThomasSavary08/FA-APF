@@ -530,8 +530,8 @@ def make_plots(
     plot_atmospheric_data(
         output_path=third_figure_path,
         data_unconditional=None,
-        data_idealist=spread_idealist/skill_idealist,
-        data_realistic=spread_realistic/skill_realistic,
+        data_idealist=spread_idealist / skill_idealist,
+        data_realistic=spread_realistic / skill_realistic,
         variables=variables_second_plot,
         levels=levels_second_plot,
         title=title_third_plot,
