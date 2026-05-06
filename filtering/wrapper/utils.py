@@ -1,11 +1,12 @@
 # Libraries
 import jax.numpy as jnp  # type: ignore
 import logging
+import math as m
 import numpy as np
 import pandas as pd
 import xarray
 
-from jax import Array  # type: ignore
+from jax import Array, lax  # type: ignore
 from typing import List, Optional, Union
 
 from .graphcast import (
@@ -30,6 +31,38 @@ def clean_NaN(
     data_array = dataset[variable]
     clean_dataset = dataset.assign({variable: data_array.fillna(fill_value)})
     return clean_dataset
+
+
+def coarsening(x: Array, factor: int) -> Array:
+    """
+    Do coarsening on a input array.
+    Input(s)
+        - x (Array): input array with dimension (batch=1, lat=181, lon=360, num_channels)
+        - factor (int): coarsening factor
+    Returns
+        - y (Array): coarsened array with dimension (batch=1, ceil(181/factor), ceil(360/factor), num_channels)
+    """
+    window = (1, factor, factor, 1)
+    stride = (1, factor, factor, 1)
+    ones = jnp.ones_like(x)
+    sums = lax.reduce_window(
+        x,
+        init_value=0.0,
+        computation=lax.add,
+        window_dimensions=window,
+        window_strides=stride,
+        padding="SAME",
+    )
+    count = lax.reduce_window(
+        ones,
+        init_value=0.0,
+        computation=lax.add,
+        window_dimensions=window,
+        window_strides=stride,
+        padding="SAME",
+    )
+    y = sums / count
+    return y
 
 
 def convert_xarray_to_jax(array_xarray: xarray.Dataset, jax_array: bool = True) -> Array:
@@ -87,8 +120,10 @@ def draw_normalized_observations(
     sigma_y: Array,
     mask_satellite: Union[Array, None],
     mask_weather_stations: Union[Array, None],
+    coarsening_factor: Union[int, None],
     observed_variables_satellite: Union[List[str], None],
     observed_variables_weather_stations: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
 ) -> Array:
     """
     Draw normalized observations from p(hat{y}^{k} | x^{k})
@@ -100,8 +135,10 @@ def draw_normalized_observations(
         - sigma_y (Array): diagonal covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - mask_satellite (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
         - mask_weather_stations (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+        - coarsening_factor (Union[int, None]): coarsening factor
         - observed_variables_satellite (Union[List[str], None]): ordered list of variables observed by satellite
         - observed_variables_weather_stations (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening observations
     Returns
         observations (Array): a sample from p(hat{y}^{k} | x^{k})
     """
@@ -113,35 +150,46 @@ def draw_normalized_observations(
     # Normalize the input state
     hat_x = normalize(values=x, scales=std_x, locations=mean_x)
 
-    # Extract observation from weather stations
-    if (observed_variables_weather_stations is not None) and (mask_weather_stations is not None):
-        obs_weather_stations = hat_x[observed_variables_weather_stations]
-        obs_weather_stations = convert_xarray_to_jax(obs_weather_stations, jax_array=False)
-        obs_weather_stations = obs_weather_stations[:, mask_weather_stations, :]
-        obs_weather_stations = obs_weather_stations.reshape((
-            obs_weather_stations.shape[0],
-            -1,
-        ))
-    else:
-        obs_weather_stations = jnp.array([[]])
+    # Extract coarsening observations
+    if (coarsening_factor is not None) and (observed_variables_coarsening is not None):
+        obs_coarsening = hat_x[observed_variables_coarsening]
+        obs_coarsening = convert_xarray_to_jax(obs_coarsening, jax_array=False)
+        obs_coarsening = coarsening(x=obs_coarsening, factor=coarsening_factor)
+        obs_coarsening = obs_coarsening.reshape(obs_coarsening.shape[0], -1)
+        observations = obs_coarsening
 
-    # Extract observation from satellite
-    if (observed_variables_satellite is not None) and (mask_satellite is not None):
-        obs_satellite = hat_x[observed_variables_satellite]
-        obs_satellite = convert_xarray_to_jax(obs_satellite, jax_array=False)
-        obs_satellite = obs_satellite[:, mask_satellite, :]
-        obs_satellite = obs_satellite.reshape((
-            obs_satellite.shape[0],
-            -1,
-        ))
     else:
-        obs_satellite = jnp.array([[]])
+        # Extract observation from weather stations
+        if (observed_variables_weather_stations is not None) and (
+            mask_weather_stations is not None
+        ):
+            obs_weather_stations = hat_x[observed_variables_weather_stations]
+            obs_weather_stations = convert_xarray_to_jax(obs_weather_stations, jax_array=False)
+            obs_weather_stations = obs_weather_stations[:, mask_weather_stations, :]
+            obs_weather_stations = obs_weather_stations.reshape((
+                obs_weather_stations.shape[0],
+                -1,
+            ))
+        else:
+            obs_weather_stations = jnp.array([[]])
 
-    # Concatenate observations from ground stations and satellite
-    observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
+        # Extract observation from satellite
+        if (observed_variables_satellite is not None) and (mask_satellite is not None):
+            obs_satellite = hat_x[observed_variables_satellite]
+            obs_satellite = convert_xarray_to_jax(obs_satellite, jax_array=False)
+            obs_satellite = obs_satellite[:, mask_satellite, :]
+            obs_satellite = obs_satellite.reshape((
+                obs_satellite.shape[0],
+                -1,
+            ))
+        else:
+            obs_satellite = jnp.array([[]])
+
+        # Concatenate observations from ground stations and satellite
+        observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
 
     # Add noise to the observations
-    noise = sigma_y * np.random.randn(*sigma_y.shape)
+    noise = jnp.sqrt(sigma_y) * np.random.randn(*sigma_y.shape)
     observations += noise
     observations = jnp.array(observations)
 
@@ -181,10 +229,13 @@ def normalized_observation_covariance(
     std_x: xarray.Dataset,
     mask_satellite: Union[Array, None],
     mask_weather_stations: Union[Array, None],
+    coarsening_factor: Union[int, None],
     sigma_y_satellite: Union[Array, None],
     sigma_y_weather_stations: Union[Array, None],
+    sigma_y_coarsening: Union[Array, None],
     observed_variables_satellite: Union[List[str], None],
     observed_variables_weather_stations: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
 ) -> Array:
     """
     Get the covariance matrix of normalized observations with dimension (1, num_observed_variables)
@@ -192,14 +243,21 @@ def normalized_observation_covariance(
         | num_observed_variables = num_observed_variables_ws + num_observed_variables_sat
         | num_observed_variables_ws = sum(mask_ws) * len(observed_variables_ws)
         | num_observed_variables_sat = sum(mask_sat) * len(observed_variables_sat) * 13
+    or:
+        | k = coarsening_factor
+        | num_observed_variables_coarsening = ceil(181/k) * ceil(360/k) * num_variables
+        | num_variables = number of observed surface variables + 13 * number of observed atmospheric variables
     Input(s)
         - std_x (xarray.Dataset): standard deviations of the system's state
         - mask_satellite (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
         - mask_weather_stations (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+        - coarsening_factor (Union[int, None]): coarsening factor
         - sigma_y_satellite (Union[Array, None]): covariance matrix of unnormalized satellite observations with dimension (len(observed_variables_sat), 13)
         - sigma_y_weather_stations (Union[Array, None]): covariance matrix of unnormalized ground observations with dimension (len(observed_variables_ws),)
+        - sigma_y_coarsening (Union[Array, None]): covariance matrix of unnormalized coarsened observations with dimension (num_variables,)
         - observed_variables_satellite (Union[List[str], None]): ordered list of variables observed by satellite
-        - observed_variables_weather_stations (Union[List[str], None]): oredered list of variables observed by ground weather stations
+        - observed_variables_weather_stations (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[list[str], None]): ordered list of observed variables for coarsening
     Returns
         - sigma_y_hat: covariance matrix of normalized observations with dimension (1, num_observed_variables)
     """
@@ -257,7 +315,7 @@ def normalized_observation_covariance(
             - sigma_y (Array): covariance matrix of unnormalized satellite observations with dimension (len(observed_variables), 13)
             - observed_variables (List[str]): ordered list of variables observed by the satellite
         Returns
-            - sigma_y_hat: covariance matrix if normalized satellite observations with dimension (1, num_observed_variables_satstd)
+            - sigma_y_hat: covariance matrix if normalized satellite observations with dimension (1, num_observed_variables_sat)
         """
         # Check dimensions
         assert len(observed_variables) == sigma_y.shape[0]
@@ -279,6 +337,42 @@ def normalized_observation_covariance(
 
         return sigma_y_hat
 
+    def normalized_coarsening_covariance(
+        std_x: xarray.Dataset,
+        factor: int,
+        sigma_y: Array,
+        observed_variables: List[str],
+    ) -> Array:
+        """
+        Get the covariance matrix of normalized coarsening observations with dimension (1, num_observed_variables_coarsening)
+        with:
+            | num_observed_variables_sat = sum(mask) * len(observed_variables) * 13
+        Input(s):
+            - std_x (xarray.Dataset): standard deviations of the system's state
+            - factor (int): coarsening factor
+            - sigma_y (Array): covariance matrix of unnormalized coarsening observations with dimension (num_variables,)
+            - observed_variables (List[str]): ordered list of coarsened variables
+        Returns
+            - sigma_y_hat: covariance matrix of normalized coarsened observations with dimension (1, num_observed_variables_coarsening)
+        """
+        # Get std_{X|Y}
+        std_xy = std_x[observed_variables]
+        std_xy_array = jnp.concatenate([
+            jnp.ravel(jnp.array(std_xy[v].values)) for v in sorted(std_xy.data_vars)
+        ])
+
+        # Get sigma_hat_y
+        sigma_y_hat = sigma_y / (std_xy_array**2)
+
+        # Duplicate and reshape sigma_y_hat
+        H, W = m.ceil(181 / factor), m.ceil(360 / factor)
+        sigma_y_hat = jnp.broadcast_to(
+            sigma_y_hat.reshape(1, 1, 1, -1), (1, H, W, sigma_y_hat.shape[0])
+        )
+        sigma_y_hat = sigma_y_hat.reshape(sigma_y_hat.shape[0], -1)
+
+        return sigma_y_hat
+
     # Check that at least one type of observation is available
     satellite = (
         (mask_satellite is not None)
@@ -290,32 +384,47 @@ def normalized_observation_covariance(
         and (sigma_y_weather_stations is not None)
         and (observed_variables_weather_stations is not None)
     )
-    assert satellite or weather_stations
+    coarsening = (
+        (coarsening_factor is not None)
+        and (sigma_y_coarsening is not None)
+        and (observed_variables_coarsening is not None)
+    )
+    assert satellite or weather_stations or coarsening
 
-    # Get the (diagonal) covariance matrix of normalized ground station observations
-    if weather_stations:
-        sigma_y_hat_ws = normalized_weather_stations_covariance(
+    # Get the (diagonal) covariance matrix of normalized coarsened observations
+    if coarsening:
+        sigma_y_hat = normalized_coarsening_covariance(
             std_x=std_x,
-            mask=mask_weather_stations,
-            sigma_y=sigma_y_weather_stations,
-            observed_variables=observed_variables_weather_stations,
+            factor=coarsening_factor,
+            sigma_y=sigma_y_coarsening,
+            observed_variables=observed_variables_coarsening,
         )
-    else:
-        sigma_y_hat_ws = None
 
-    # Get the (diagonal) convariance matrix of normalized satellite observations
-    if satellite:
-        sigma_y_hat_sat = normalized_satellite_covariance(
-            std_x=std_x,
-            mask=mask_satellite,
-            sigma_y=sigma_y_satellite,
-            observed_variables=observed_variables_satellite,
-        )
     else:
-        sigma_y_hat_sat = None
+        # Get the (diagonal) covariance matrix of normalized ground station observations
+        if weather_stations:
+            sigma_y_hat_ws = normalized_weather_stations_covariance(
+                std_x=std_x,
+                mask=mask_weather_stations,
+                sigma_y=sigma_y_weather_stations,
+                observed_variables=observed_variables_weather_stations,
+            )
+        else:
+            sigma_y_hat_ws = None
 
-    # Concatenate the two covariance matrix
-    sigma_y_hat = jnp.concatenate([sigma_y_hat_ws, sigma_y_hat_sat], axis=1)
+        # Get the (diagonal) convariance matrix of normalized satellite observations
+        if satellite:
+            sigma_y_hat_sat = normalized_satellite_covariance(
+                std_x=std_x,
+                mask=mask_satellite,
+                sigma_y=sigma_y_satellite,
+                observed_variables=observed_variables_satellite,
+            )
+        else:
+            sigma_y_hat_sat = None
+
+        # Concatenate the two covariance matrix
+        sigma_y_hat = jnp.concatenate([sigma_y_hat_ws, sigma_y_hat_sat], axis=1)
 
     return sigma_y_hat
 
