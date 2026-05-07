@@ -116,8 +116,10 @@ class ConditionalDenoiser:
     Input(s)
         - mask_satellite (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
         - mask_weather_stations (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+        - coarsening_factor (Union[int, None]): coarsening factor
         - observed_variables_satellite (Union[List[str], None]): ordered list of variables observed by satellite
         - observed_variables_weather_stations (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[List[str], None]): ordered kist of observed variable for coarsening
         - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - std_z (xarray.Dataset): standard deviations of residuals
         - std_x (xarray.Dataset): standard deviations of system states
@@ -134,8 +136,10 @@ class ConditionalDenoiser:
         self,
         mask_satellite: Union[Array, None],
         mask_weather_stations: Union[Array, None],
+        coarsening_factor: Union[int, None],
         observed_variables_satellite: Union[List[str], None],
         observed_variables_weather_stations: Union[List[str], None],
+        observed_variables_coarsening: Union[List[str], None],
         sigma_y: Array,
         std_z: xarray.Dataset,
         std_x: xarray.Dataset,
@@ -144,8 +148,8 @@ class ConditionalDenoiser:
         denoiser_architecture_config: denoiser.DenoiserArchitectureConfig,
         noise_encoder_config: Optional[denoiser.NoiseEncoderConfig] = None,
         solver: Optional[str] = "bicgstab",
-        max_iter: Optional[int] = 3,
-        tol: Optional[float] = 1e-10,
+        max_iter: Optional[int] = 2,
+        tol: Optional[float] = 1e-8,
     ):
         # Statistics attributes
         self.std_z = std_z
@@ -155,8 +159,10 @@ class ConditionalDenoiser:
         # Observations attributes
         self.mask_sat = mask_satellite
         self.mask_ws = mask_weather_stations
+        self.coarsening_factor = coarsening_factor
         self.observed_variables_sat = observed_variables_satellite
         self.observed_variables_ws = observed_variables_weather_stations
+        self.observed_variables_coarsening = observed_variables_coarsening
         self.sigma_y = sigma_y
 
         # Solver attributes
@@ -241,32 +247,43 @@ class ConditionalDenoiser:
         # Normalize the array
         x = utils.normalize(values=x, scales=self.std_x, locations=self.mean_x)
 
-        # Extract observation from weather stations
-        if (self.observed_variables_ws is not None) and (self.mask_ws is not None):
-            obs_weather_stations = x[self.observed_variables_ws]
-            obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations)
-            obs_weather_stations = obs_weather_stations[:, self.mask_ws, :]
-            obs_weather_stations = obs_weather_stations.reshape((
-                obs_weather_stations.shape[0],
-                -1,
-            ))
-        else:
-            obs_weather_stations = jnp.array([[]])
+        # Extract coarsened observations
+        if (self.coarsening_factor is not None) and (
+            self.observed_variables_coarsening is not None
+        ):
+            obs_coarsening = x[self.observed_variables_coarsening]
+            obs_coarsening = utils.convert_xarray_to_jax(obs_coarsening)
+            obs_coarsening = utils.coarsening(x=obs_coarsening, factor=self.coarsening_factor)
+            obs_coarsening = obs_coarsening.reshape(obs_coarsening.shape[0], -1)
+            observations = obs_coarsening
 
-        # Extract observation from satellite
-        if (self.observed_variables_sat is not None) and (self.mask_sat is not None):
-            obs_satellite = x[self.observed_variables_sat]
-            obs_satellite = utils.convert_xarray_to_jax(obs_satellite)
-            obs_satellite = obs_satellite[:, self.mask_sat, :]
-            obs_satellite = obs_satellite.reshape((
-                obs_satellite.shape[0],
-                -1,
-            ))
         else:
-            obs_satellite = jnp.array([[]])
+            # Extract observation from weather stations
+            if (self.observed_variables_ws is not None) and (self.mask_ws is not None):
+                obs_weather_stations = x[self.observed_variables_ws]
+                obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations)
+                obs_weather_stations = obs_weather_stations[:, self.mask_ws, :]
+                obs_weather_stations = obs_weather_stations.reshape((
+                    obs_weather_stations.shape[0],
+                    -1,
+                ))
+            else:
+                obs_weather_stations = jnp.array([[]])
 
-        # Concatenate observations from ground stations and satellite
-        observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
+            # Extract observation from satellite
+            if (self.observed_variables_sat is not None) and (self.mask_sat is not None):
+                obs_satellite = x[self.observed_variables_sat]
+                obs_satellite = utils.convert_xarray_to_jax(obs_satellite)
+                obs_satellite = obs_satellite[:, self.mask_sat, :]
+                obs_satellite = obs_satellite.reshape((
+                    obs_satellite.shape[0],
+                    -1,
+                ))
+            else:
+                obs_satellite = jnp.array([[]])
+
+            # Concatenate observations from ground stations and satellite
+            observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
 
         return observations
 
@@ -331,7 +348,7 @@ class ConditionalDenoiser:
 
         # Compute E[hat{z}^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}]
         x_kp1 = utils.convert_jax_to_xarray(x_kp1, noisy_targets)
-        unnormalized_inputs = utils.unnormalize(inputs, self.std_x, self.mean_x)
+        unnormalized_inputs = utils.unnormalize(inputs, scales=self.std_x, locations=self.mean_x)
         hat_z_kp1 = utils.substract_input_and_normalize_target(
             inputs=unnormalized_inputs,
             targets=x_kp1,

@@ -115,8 +115,10 @@ def conditional_sampling(
     sigma_y: Array,
     mask_satellite: Union[Array, None],
     mask_weather_stations: Union[Array, None],
+    coarsening_factor: Union[int, None],
     observed_variables_satellite: Union[List[str], None],
     observed_variables_weather_stations: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
     solver: str = None,
     max_iter: int = None,
     tol: float = None,
@@ -141,6 +143,7 @@ def conditional_sampling(
         - mask_weather_stations (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
         - observed_variables_satellite (Union[List[str], None]): ordered list of variables observed by satellite
         - observed_variables_weather_stations (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for caorsening
         - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
@@ -152,8 +155,10 @@ def conditional_sampling(
     denoiser = ConditionalDenoiser(
         mask_satellite=mask_satellite,
         mask_weather_stations=mask_weather_stations,
+        coarsening_factor=coarsening_factor,
         observed_variables_satellite=observed_variables_satellite,
         observed_variables_weather_stations=observed_variables_weather_stations,
+        observed_variables_coarsening=observed_variables_coarsening,
         sigma_y=sigma_y,
         std_z=std_z,
         std_x=std_x,
@@ -193,32 +198,44 @@ def conditional_sampling(
         clean_reference = reference
     normalized_reference = utils.normalize(clean_reference, std_x, mean_x)
 
-    # Extract observation from weather stations
-    if (observed_variables_weather_stations is not None) and (mask_weather_stations is not None):
-        obs_weather_stations = normalized_reference[observed_variables_weather_stations]
-        obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations, jax_array=False)
-        obs_weather_stations = obs_weather_stations[:, mask_weather_stations, :]
-        obs_weather_stations = obs_weather_stations.reshape((
-            obs_weather_stations.shape[0],
-            -1,
-        ))
-    else:
-        obs_weather_stations = jnp.array([[]])
+    # Extract coarsened observations
+    if (coarsening_factor is not None) and (observed_variables_coarsening is not None):
+        obs_coarsening = normalized_reference[observed_variables_coarsening]
+        obs_coarsening = utils.coarsening(x=obs_coarsening, factor=coarsening_factor)
+        obs_coarsening = obs_coarsening.reshape(obs_coarsening.shape[0], -1)
+        observations = obs_coarsening
 
-    # Extract observation from satellite
-    if (observed_variables_satellite is not None) and (mask_satellite is not None):
-        obs_satellite = normalized_reference[observed_variables_satellite]
-        obs_satellite = utils.convert_xarray_to_jax(obs_satellite, jax_array=False)
-        obs_satellite = obs_satellite[:, mask_satellite, :]
-        obs_satellite = obs_satellite.reshape((
-            obs_satellite.shape[0],
-            -1,
-        ))
     else:
-        obs_satellite = jnp.array([[]])
+        # Extract observation from weather stations
+        if (observed_variables_weather_stations is not None) and (
+            mask_weather_stations is not None
+        ):
+            obs_weather_stations = normalized_reference[observed_variables_weather_stations]
+            obs_weather_stations = utils.convert_xarray_to_jax(
+                obs_weather_stations, jax_array=False
+            )
+            obs_weather_stations = obs_weather_stations[:, mask_weather_stations, :]
+            obs_weather_stations = obs_weather_stations.reshape((
+                obs_weather_stations.shape[0],
+                -1,
+            ))
+        else:
+            obs_weather_stations = jnp.array([[]])
 
-    # Concatenate observations from ground stations and satellite
-    observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
+        # Extract observation from satellite
+        if (observed_variables_satellite is not None) and (mask_satellite is not None):
+            obs_satellite = normalized_reference[observed_variables_satellite]
+            obs_satellite = utils.convert_xarray_to_jax(obs_satellite, jax_array=False)
+            obs_satellite = obs_satellite[:, mask_satellite, :]
+            obs_satellite = obs_satellite.reshape((
+                obs_satellite.shape[0],
+                -1,
+            ))
+        else:
+            obs_satellite = jnp.array([[]])
+
+        # Concatenate observations from ground stations and satellite
+        observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
 
     # Use the sampling function of the conditional sampler
     return predictor(
@@ -241,12 +258,15 @@ def ppc(
     mean_x_path: str,
     sampler: str,
     sampler_config: Union[Dict, gencast.SamplerConfig],
-    mask_sat_path: str,
-    mask_ws_path: str,
-    observed_variables_sat: List[str],
-    observed_variables_ws: List[str],
-    sigma_y_sat_path: Array,
-    sigma_y_ws_path: Array,
+    mask_sat_path: Union[str, None],
+    mask_ws_path: Union[str, None],
+    coarsening_factor: Union[int, None],
+    observed_variables_sat: Union[List[str], None],
+    observed_variables_ws: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
+    sigma_y_sat_path: Union[str, None],
+    sigma_y_ws_path: Union[str, None],
+    sigma_y_coarsening_path: Union[str, None],
     solver: str,
     max_iter: int,
     tol: float,
@@ -264,12 +284,15 @@ def ppc(
         - mean_x_path (str): path to mean_x statistic
         - sampler (str): sampler to use during the reverse diffusion process
         - sampler_config (Union[Dict, gencast.SamplerConfig]): configuration of the sampler
-        - mask_sat_path (str): path to satellite mask
-        - mask_ws_path (str): path to ground weather stations mask
+        - mask_sat_path (Union[str, None]): path to satellite mask
+        - mask_ws_path (Union[str, None]): path to ground weather stations mask
+        - coarsening_factor (Union[int, None]): coarsening factor
         - observed_variables_sat (str): ordered list of variables observed by satellite
         - observed_variables_ws (str): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening
         - sigma_y_sat_path (str): path to the covariance matrix of unnormalized satellite observations (with dimension (len(observed_variables_sat), 13)))
         - sigma_y_ws_path (str): path to the covariance matrix of unnormalized ground observations (with dimension (len(observed_variables_ws),)
+        - sigma_y_coarsening_path (str): path to the covariance matrix of unnormalized coarsened observations (with dimension (num_variables,)
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
         - tol (float): numerical tolerance used in the MMPS solver
@@ -323,24 +346,43 @@ def ppc(
     denoiser_architecture_config.sparse_transformer_config.attention_type = "triblockdiag_mha"
 
     # Load masks
-    mask_sat = jnp.array(np.load(mask_sat_path).astype(bool))
-    if len(mask_sat.shape) == 3:
-        mask_sat = mask_sat[0, :]
-    mask_ws = jnp.array(np.load(mask_ws_path).astype(bool))
+    if mask_sat_path is not None:
+        mask_sat = jnp.array(np.load(mask_sat_path).astype(bool))
+        if len(mask_sat.shape) == 3:
+            mask_sat = mask_sat[0, :]
+    else:
+        mask_sat = None
+    if mask_ws_path is not None:
+        mask_ws = jnp.array(np.load(mask_ws_path).astype(bool))
+    else:
+        mask_ws = None
 
     # Load unnormalized covariance matrix
-    sigma_y_sat = jnp.array(np.load(sigma_y_sat_path).astype(jnp.float32))
-    sigma_y_ws = jnp.array(np.load(sigma_y_ws_path).astype(jnp.float32))
+    if sigma_y_sat_path is not None:
+        sigma_y_sat = jnp.array(np.load(sigma_y_sat_path).astype(jnp.float32))
+    else:
+        sigma_y_sat = None
+    if sigma_y_ws_path is not None:
+        sigma_y_ws = jnp.array(np.load(sigma_y_ws_path).astype(jnp.float32))
+    else:
+        sigma_y_ws = None
+    if sigma_y_coarsening_path is not None:
+        sigma_y_coarsening = jnp.array(np.load(sigma_y_coarsening_path).astype(jnp.float32))
+    else:
+        sigma_y_coarsening = None
 
     # Normalized observations covariance matrix
     sigma_hat_y = utils.normalized_observation_covariance(
         std_x=std_x,
         mask_satellite=mask_sat,
         mask_weather_stations=mask_ws,
+        coarsening_factor=coarsening_factor,
         sigma_y_satellite=sigma_y_sat,
         sigma_y_weather_stations=sigma_y_ws,
+        sigma_y_coarsening=sigma_y_coarsening,
         observed_variables_satellite=observed_variables_sat,
         observed_variables_weather_stations=observed_variables_ws,
+        observed_variables_coarsening=observed_variables_coarsening,
     )
 
     # Jitted version of the functions
@@ -384,8 +426,10 @@ def ppc(
             reference=eval_targets,
             mask_satellite=mask_sat,
             mask_weather_stations=mask_ws,
+            coarsening_factor=coarsening_factor,
             observed_variables_satellite=observed_variables_sat,
             observed_variables_weather_stations=observed_variables_ws,
+            observed_variables_coarsening=observed_variables_coarsening,
             sigma_y=sigma_hat_y,
             solver=solver,
             max_iter=max_iter,
