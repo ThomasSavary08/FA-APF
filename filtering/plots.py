@@ -192,7 +192,8 @@ def plot_trajectories(
 def plot_surface_data(
     output_path: str,
     data_unconditional: xarray.Dataset,
-    data_idealist: Union[xarray.Dataset, None],
+    data_subsampling: Union[xarray.Dataset, None],
+    data_coarsening: Union[xarray.Dataset, None],
     data_realistic: Union[xarray.Dataset, None],
     variables: List[str],
     num_row: int,
@@ -206,8 +207,9 @@ def plot_surface_data(
     Input(s)
         - output_path (str): path to save the figure
         - data_unconditional (xarray.Dataset): data for unconditional trajectories
-        - data_idealist (xarray.Dataset): data for idealist filtering (on a grid)
-        - data_realistic (xarray.Dataset): data for reaalistic filtering (weather stations + satellites)
+        - data_subsampling (Union[xarray.Dataset, None]): data for idealist filtering with subsampling observations
+        - data_coarsening (Union[xarray.Dataset, None]): data for idealist filtering with coarsened observations
+        - data_realistic (Union[xarray.Dataset, None]): data for realistic filtering with weather stations and/or satellites observations
         - variables (List[str]): list of surface variables to plot
         - num_row (int): number of rows in the figure
         - num_col (int): number of columns in the figure
@@ -217,8 +219,10 @@ def plot_surface_data(
     """
     # Checks
     assert len(variables) == (num_row * num_col)
-    if data_idealist is not None:
-        assert int(data_unconditional.sizes["time"]) == int(data_idealist.sizes["time"])
+    if data_subsampling is not None:
+        assert int(data_unconditional.sizes["time"]) == int(data_subsampling.sizes["time"])
+    if data_coarsening is not None:
+        assert int(data_unconditional.sizes["time"]) == int(data_coarsening.sizes["time"])
     if data_realistic is not None:
         assert int(data_unconditional.sizes["time"]) == int(data_realistic.sizes["time"])
     assert len(variables) == len(ylabels)
@@ -228,10 +232,14 @@ def plot_surface_data(
     for i, variable in enumerate(variables):
         # Get the data for the variable of interest
         data_unconditional_variable = data_unconditional[variable].data[0]
-        if data_idealist is not None:
-            data_idealist_variable = data_idealist[variable].data[0]
+        if data_subsampling is not None:
+            data_subsampling_variable = data_subsampling[variable].data[0]
         else:
-            data_idealist_variable = None
+            data_subsampling_variable = None
+        if data_coarsening is not None:
+            data_coarsening_variable = data_coarsening[variable].data[0]
+        else:
+            data_coarsening_variable = None
         if data_realistic is not None:
             data_realistic_variable = data_realistic[variable].data[0]
         else:
@@ -240,7 +248,8 @@ def plot_surface_data(
         # Define the plot
         plot = (
             data_unconditional_variable,
-            data_idealist_variable,
+            data_subsampling_variable,
+            data_coarsening_variable,
             data_realistic_variable,
             ylabels[i],
         )
@@ -248,7 +257,9 @@ def plot_surface_data(
 
     # Plots
     fig, axs = plt.subplots(num_row, num_col, figsize=figsize, sharey=False)
-    for ax, (data_unconditional, data_idealist, data_realistic, ylabel) in zip(axs, plots):
+    for ax, (data_unconditional, data_subsampling, data_coarsening, data_realistic, ylabel) in zip(
+        axs, plots
+    ):
         # Custom ticks
         tick_positions, tick_labels = custom_ticks(len(data_unconditional))
         ax.set_xticks(tick_positions)
@@ -256,10 +267,12 @@ def plot_surface_data(
 
         # Plot the data
         ax.plot(data_unconditional, color="red", label="GenCast")
-        if data_idealist is not None:
-            ax.plot(data_idealist, color="blue", label="FA-APF (Idealist)")
+        if data_subsampling is not None:
+            ax.plot(data_subsampling, color="blue", label="Idealist (Subsampling)")
+        if data_coarsening is not None:
+            ax.plot(data_coarsening, color="green", label="Idealist (Coarsening)")
         if data_realistic is not None:
-            ax.plot(data_realistic, color="black", label="FA-APF (Realistic)")
+            ax.plot(data_realistic, color="black", label="Realistic")
 
         # Labels
         ax.set_ylabel(ylabel, fontsize=12)
@@ -278,7 +291,8 @@ def plot_surface_data(
 def plot_atmospheric_data(
     output_path: str,
     data_unconditional: Union[xarray.Dataset, None],
-    data_idealist: Union[xarray.Dataset, None],
+    data_subsampling: Union[xarray.Dataset, None],
+    data_coarsening: Union[xarray.Dataset, None],
     data_realistic: Union[xarray.Dataset, None],
     variables: List[str],
     levels: List[int],
@@ -292,8 +306,9 @@ def plot_atmospheric_data(
     Input(s)
         - output_path (str): path to save the figure
         - data_unconditional (xarray.Dataset): data for unconditional trajectories
-        - data_idealist (xarray.Dataset): data for idealist filtering (on a grid)
-        - data_realistic (xarray.Dataset): data for reaalistic filtering (weather stations + satellites)
+        - data_subsampling (Union[xarray.Dataset, None]): data for idealist filtering with subsampling observations
+        - data_coarsening (Union[xarray.Dataset, None]): data for idealist filtering with coarsened observations
+        - data_realistic (Union[xarray.Dataset, None]): data for realistic filtering with weather stations and/or satellites observations
         - variables (List[str]): list of atmospheric variables to plot
         - levels (List[int]): list of levels to plot
         - title (str): global title of the figure
@@ -302,8 +317,10 @@ def plot_atmospheric_data(
         - draw_perfect_ratio (bool): draw the perfect spread to skill ratio (y=1) on the figure as horizontal line.
     """
     # Ckecks
-    if (data_idealist is not None) and (data_unconditional is not None):
-        assert int(data_unconditional.sizes["time"]) == int(data_idealist.sizes["time"])
+    if (data_subsampling is not None) and (data_unconditional is not None):
+        assert int(data_unconditional.sizes["time"]) == int(data_subsampling.sizes["time"])
+    if (data_coarsening is not None) and (data_unconditional is not None):
+        assert int(data_unconditional.sizes["time"]) == int(data_coarsening.sizes["time"])
     if (data_realistic is not None) and (data_unconditional is not None):
         assert int(data_unconditional.sizes["time"]) == int(data_realistic.sizes["time"])
     assert len(variables) == len(ylabels)
@@ -323,10 +340,16 @@ def plot_atmospheric_data(
                 )
             else:
                 data_unconditional_variable = None
-            if data_idealist is not None:
-                data_idealist_variable = data_idealist[variable].sel(level=int(level)).data[0]
+            if data_subsampling is not None:
+                data_subsampling_variable = (
+                    data_subsampling[variable].sel(level=int(level)).data[0]
+                )
             else:
-                data_idealist_variable = None
+                data_subsampling_variable = None
+            if data_coarsening is not None:
+                data_coarsening_variable = data_coarsening[variable].sel(level=int(level)).data[0]
+            else:
+                data_coarsening_variable = None
             if data_realistic is not None:
                 data_realistic_variable = data_realistic[variable].sel(level=int(level)).data[0]
             else:
@@ -335,8 +358,10 @@ def plot_atmospheric_data(
             # Custom ticks
             if data_unconditional_variable is not None:
                 tick_positions, tick_labels = custom_ticks(len(data_unconditional_variable))
-            elif data_idealist_variable is not None:
-                tick_positions, tick_labels = custom_ticks(len(data_idealist_variable))
+            elif data_subsampling_variable is not None:
+                tick_positions, tick_labels = custom_ticks(len(data_subsampling_variable))
+            elif data_coarsening_variable is not None:
+                tick_positions, tick_labels = custom_ticks(len(data_coarsening_variable))
             else:
                 tick_positions, tick_labels = custom_ticks(len(data_realistic_variable))
             ax.set_xticks(tick_positions)
@@ -345,10 +370,12 @@ def plot_atmospheric_data(
             # Plot the data
             if data_unconditional_variable is not None:
                 ax.plot(data_unconditional_variable, color="red", label="GenCast")
-            if data_idealist_variable is not None:
-                ax.plot(data_idealist_variable, color="blue", label="FA-APF (Idealist)")
+            if data_subsampling_variable is not None:
+                ax.plot(data_subsampling_variable, color="blue", label="Idealist (Subsampling)")
+            if data_coarsening_variable is not None:
+                ax.plot(data_coarsening_variable, color="green", label="Idealist (Coarsening)")
             if data_realistic_variable is not None:
-                ax.plot(data_realistic_variable, color="black", label="FA-APF (Realistic)")
+                ax.plot(data_realistic_variable, color="black", label="Realistic")
             if draw_perfect_ratio:
                 ax.axhline(1, color="red", linestyle="--", linewidth=1.5)
 
@@ -430,7 +457,8 @@ def get_metric(metric_path: str, num_steps: int) -> xarray.Dataset:
 def make_plots(
     num_steps: int,
     unconditional_path: str,
-    idealist_path: Union[str, None],
+    subsampling_path: Union[str, None],
+    coarsening_path: Union[str, None],
     realistic_path: Union[str, None],
     gt_path: str,
     checkpoint_path: str,
@@ -470,14 +498,23 @@ def make_plots(
         num_steps=num_steps,
     )
 
-    # Load idealist data
-    if idealist_path is not None:
-        ens_idealist, skill_idealist, spread_idealist = get_metric(
-            metric_path=idealist_path,
+    # Load subsampling data
+    if subsampling_path is not None:
+        ens_subsampling, skill_subsampling, spread_subsampling = get_metric(
+            metric_path=subsampling_path,
             num_steps=num_steps,
         )
     else:
-        ens_idealist, skill_idealist, spread_idealist = None, None, None
+        ens_subsampling, skill_subsampling, spread_subsampling = None, None, None
+
+    # Load coarsening data
+    if coarsening_path is not None:
+        ens_coarsening, skill_coarsening, spread_coarsening = get_metric(
+            metric_path=coarsening_path,
+            num_steps=num_steps,
+        )
+    else:
+        ens_coarsening, skill_coarsening, spread_coarsening = None, None, None
 
     # Load realistic data
     if realistic_path is not None:
@@ -497,7 +534,8 @@ def make_plots(
     plot_surface_data(
         output_path=first_figure_path,
         data_unconditional=skill_unconditional,
-        data_idealist=skill_idealist,
+        data_subsampling=skill_subsampling,
+        data_coarsening=skill_coarsening,
         data_realistic=skill_realistic,
         variables=variables_first_plot,
         num_row=num_row_first_plot,
@@ -519,7 +557,8 @@ def make_plots(
     plot_atmospheric_data(
         output_path=second_figure_path,
         data_unconditional=skill_unconditional,
-        data_idealist=skill_idealist,
+        data_subsampling=skill_subsampling,
+        data_coarsening=skill_coarsening,
         data_realistic=skill_realistic,
         variables=variables_second_plot,
         levels=levels_second_plot,
@@ -530,7 +569,8 @@ def make_plots(
     plot_atmospheric_data(
         output_path=third_figure_path,
         data_unconditional=None,
-        data_idealist=spread_idealist / skill_idealist,
+        data_subsampling=spread_subsampling / skill_subsampling,
+        data_coarsening=spread_coarsening / skill_coarsening,
         data_realistic=spread_realistic / skill_realistic,
         variables=variables_second_plot,
         levels=levels_second_plot,
@@ -544,8 +584,10 @@ def make_plots(
     # Last figures
     print("Plot ensemble means for GT, FA-APF and GenCast...")
     num_fig, times_steps_third_plot = 4, [int(elt) for elt in times_steps_third_plot]
-    if filter_third_plot == "idealist":
-        ensemble_mean_filter = ens_idealist
+    if filter_third_plot == "subsampling":
+        ensemble_mean_filter = ens_subsampling
+    elif filter_third_plot == "coarsening":
+        ensemble_mean_filter = ens_coarsening
     else:
         ensemble_mean_filter = ens_realistic
     for i, variable in enumerate(variables_third_plot):

@@ -10,10 +10,14 @@ with open(config_file_path, "r") as f:
     config = yaml.safe_load(f)
 
 # Ensure path are None or str
-if (config["idealist_path"] is None) or (config["idealist_path"] == "None"):
-    idealist_path = None
+if (config["subsampling_path"] is None) or (config["subsampling_path"] == "None"):
+    subsampling_path = None
 else:
-    idealist_path = str(config["idealist_path"])
+    subsampling_path = str(config["subsampling_path"])
+if (config["coarsening_path"] is None) or (config["coarsening_path"] == "None"):
+    coarsening_path = None
+else:
+    coarsening_path = str(config["coarsening_path"])
 if (config["realistic_path"] is None) or (config["realistic_path"] == "None"):
     realistic_path = None
 else:
@@ -32,7 +36,8 @@ figsize_second_plot = (width_second_plot, height_second_plot)
 plots.make_plots(
     num_steps=int(config["num_steps"]),
     unconditional_path=str(config["unconditional_path"]),
-    idealist_path=idealist_path,
+    subsampling_path=subsampling_path,
+    coarsening_path=coarsening_path,
     realistic_path=realistic_path,
     gt_path=str(config["gt_path"]),
     checkpoint_path=str(config["checkpoint_path"]),

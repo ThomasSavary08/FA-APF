@@ -31,7 +31,9 @@ def ensemble_mean(filter_path: str, metric_path: str, num_steps: int, num_partic
     else:
         step_path = filter_path + str("/1/")
     num_files = sum(
-        os.path.isfile(os.path.join(step_path, name)) and not name.startswith(".")
+        os.path.isfile(os.path.join(step_path, name))
+        and not name.startswith(".")
+        and name != "y.npy"
         for name in os.listdir(step_path)
     )
     assert num_files == num_particles
@@ -167,7 +169,9 @@ def spread(
     else:
         step_path = filter_path + str("/1/")
     num_files = sum(
-        os.path.isfile(os.path.join(step_path, name)) and not name.startswith(".")
+        os.path.isfile(os.path.join(step_path, name))
+        and not name.startswith(".")
+        and name != "y.npy"
         for name in os.listdir(step_path)
     )
     assert num_files == num_particles
@@ -223,10 +227,10 @@ def compute_metrics(
     Input(s)
         - filter_path (str): path to the result of the filter
         - gt_path (str): path to the ground truth (an ERA5 trajectory)
-        - metric_path (str): path to save the metrics
+        - output_path (str): path to save the metrics
+        - checkpoint_path (str): path to the checkpoint
         - num_steps (int): number of assimilation steps performed by the filter
         - num_particles (int): number of particles used by the filter
-    """
     """
     # Compute ensemble means
     print("Compute ensemble means...")
@@ -247,7 +251,6 @@ def compute_metrics(
         num_steps=num_steps,
     )
     print("")
-    """
 
     # Compute spreads
     print("Compute spreads...")
