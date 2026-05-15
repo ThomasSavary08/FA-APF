@@ -3,7 +3,8 @@ num_steps: !!int 30
 
 # Paths
 unconditional_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/unconditional/"
-idealist_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/idealist/"
+subsampling_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/idealist/subsampling/4x4/"
+coarsening_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/idealist/coarsening/4x4/"
 realistic_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/filtering/metrics/2019_03/realistic/"
 gt_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
 checkpoint_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/checkpoints/gencast_1deg.npz"

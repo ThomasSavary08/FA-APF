@@ -1,5 +1,5 @@
 # Data paths
-output_path: !!str "/gpfs/projects/acad/sail/GenCast/data/filtering/2019_03/realistic/"
+output_path: !!str "/gpfs/projects/acad/sail/GenCast/data/filtering/2019_03/idealist/coarsening/4x4/"
 data_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/trajectories/2019_03_29_1.0_13_30.nc"
 
 # Checkpoint path
@@ -12,7 +12,11 @@ N_threshold_max: !!int 60
 alpha_init: !!float 1e-6
 max_iter_alpha: !!int 100
 
+# Type of observations
+observation_type: !!str "coarsening"
+
 # Mask (observations)
+coarsening_factor: !!int 4
 mask_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/mask/mask_sat_1.npy"
 mask_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/mask/mask_ws_1.npy"
 
@@ -25,10 +29,14 @@ observed_variables_ws:
   - "2m_temperature"
   - "mean_sea_level_pressure"
   - "sea_surface_temperature"
+observed_variables_coarsening:
+  - "2m_temperature"
+  - "temperature"
 
 # Covariance matrix of unnormalized observations
 sigma_y_sat_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/satellite.npy"
 sigma_y_ws_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/weather_stations.npy"
+sigma_y_coarsening_path: !!str "/gpfs/home/acad/ulg-sysmod/tsavary/DataAssimilation/GenCast/data/observations/covariance/coarsening_4_temperature.npy"
 
 # Sampler
 sampler: "abs"

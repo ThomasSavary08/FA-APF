@@ -19,6 +19,30 @@ config_file_path = "./../config/filtering.yaml"
 with open(config_file_path, "r") as f:
     config = yaml.safe_load(f)
 
+# Check the type of observations
+if str(config["observation_type"]) == "coarsening":
+    print("Observation type: coarsening")
+    mask_sat_path = None
+    mask_ws_path = None
+    observed_variables_sat = None
+    observed_variables_ws = None
+    sigma_y_sat_path = None
+    sigma_y_ws_path = None
+    coarsening_factor = int(config["coarsening_factor"])
+    observed_variables_coarsening = list(config["observed_variables_coarsening"])
+    sigma_y_coarsening_path = str(config["sigma_y_coarsening_path"])
+else:
+    print("Observation type: Subsampling and/or satellite")
+    mask_sat_path = str(config["mask_sat_path"])
+    mask_ws_path = str(config["mask_ws_path"])
+    observed_variables_sat = list(config["observed_variables_sat"])
+    observed_variables_ws = list(config["observed_variables_ws"])
+    sigma_y_sat_path = str(config["sigma_y_sat_path"])
+    sigma_y_ws_path = str(config["sigma_y_ws_path"])
+    coarsening_factor = None
+    observed_variables_coarsening = None
+    sigma_y_coarsening_path = None
+
 # Do filtering wit the FA-APF
 fa_apf.filtering(
     data_path=str(config["data_path"]),
@@ -28,12 +52,15 @@ fa_apf.filtering(
     N_thr_min=int(config["N_threshold_min"]),
     N_thr_max=int(config["N_threshold_max"]),
     alpha_init=float(config["alpha_init"]),
-    mask_sat_path=str(config["mask_sat_path"]),
-    mask_ws_path=str(config["mask_ws_path"]),
-    observed_variables_sat=list(config["observed_variables_sat"]),
-    observed_variables_ws=list(config["observed_variables_ws"]),
-    sigma_y_sat_path=str(config["sigma_y_sat_path"]),
-    sigma_y_ws_path=str(config["sigma_y_ws_path"]),
+    mask_sat_path=mask_sat_path,
+    mask_ws_path=mask_ws_path,
+    coarsening_factor=coarsening_factor,
+    observed_variables_sat=observed_variables_sat,
+    observed_variables_ws=observed_variables_ws,
+    observed_variables_coarsening=observed_variables_coarsening,
+    sigma_y_sat_path=sigma_y_sat_path,
+    sigma_y_ws_path=sigma_y_ws_path,
+    sigma_y_coarsening_path=sigma_y_coarsening_path,
     sampler=str(config["sampler"]),
     sampler_config=dict(config["sampler_config"]),
     std_z_path=str(config["std_z_path"]),

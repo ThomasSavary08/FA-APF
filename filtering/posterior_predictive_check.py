@@ -111,15 +111,15 @@ def conditional_sampling(
     std_x: xarray.Dataset,
     std_z: xarray.Dataset,
     mean_x: xarray.Dataset,
-    reference: Array,
+    reference: xarray.Dataset,
     sigma_y: Array,
     mask_satellite: Union[Array, None],
     mask_weather_stations: Union[Array, None],
     observed_variables_satellite: Union[List[str], None],
     observed_variables_weather_stations: Union[List[str], None],
-    solver: str = None,
-    max_iter: int = None,
-    tol: float = None,
+    solver: str,
+    max_iter: int,
+    tol: float,
 ) -> xarray.Dataset:
     """
     Draw a sample from p(x^{k+1} | x^{k}, y^{k+1}).
@@ -152,8 +152,10 @@ def conditional_sampling(
     denoiser = ConditionalDenoiser(
         mask_satellite=mask_satellite,
         mask_weather_stations=mask_weather_stations,
+        coarsening_factor=None,
         observed_variables_satellite=observed_variables_satellite,
         observed_variables_weather_stations=observed_variables_weather_stations,
+        observed_variables_coarsening=None,
         sigma_y=sigma_y,
         std_z=std_z,
         std_x=std_x,
@@ -337,10 +339,13 @@ def ppc(
         std_x=std_x,
         mask_satellite=mask_sat,
         mask_weather_stations=mask_ws,
+        coarsening_factor=None,
         sigma_y_satellite=sigma_y_sat,
         sigma_y_weather_stations=sigma_y_ws,
+        sigma_y_coarsening=None,
         observed_variables_satellite=observed_variables_sat,
         observed_variables_weather_stations=observed_variables_ws,
+        observed_variables_coarsening=None,
     )
 
     # Jitted version of the functions

@@ -36,8 +36,10 @@ def weighting(
     observations: Array,
     mask_sat: Union[Array, None],
     mask_ws: Union[Array, None],
+    coarsening_factor: Union[int, None],
     observed_variables_sat: Union[List[str], None],
     observed_variables_ws: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
     sigma_y: Array,
     forcings: xarray.Dataset,
     target_template: xarray.Dataset,
@@ -63,8 +65,10 @@ def weighting(
         - observation (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
         - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
         - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+        - coarsening_factor (Union[int, None]): coarsening factor
         - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
         - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening
         - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser
         - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
@@ -186,11 +190,13 @@ def weighting(
     estimate_expectation_pmap = xarray_jax.pmap(estimate_expectation_jitted, dim="sample")
 
     def observation_operator(
-        x: Array,
+        x: xarray.Dataset,
         mask_sat: Union[Array, None],
         mask_ws: Union[Array, None],
+        coarsening_factor: Union[int, None],
         observed_variables_sat: Union[List[str], None],
         observed_variables_ws: Union[List[str], None],
+        observed_variables_coarsening: Union[List[str], None],
         std_x: xarray.Dataset,
         mean_x: xarray.Dataset,
     ) -> Array:
@@ -200,8 +206,10 @@ def weighting(
             - x (Array): input of the observation operator, an estimation of E[x^{k+1} | hat{z}^{k+1}_{t}, hat{x}^{k}] in the following
             - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
             - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+            - coarsening_factor (Union[int, None]): coarsening factor
             - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
             - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+            - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening
             - std_x (xarray.Dataset): standard deviation of unnormalized states
             - mean_x (xarray.Dataset): mean of unnnormalized states
         Returns
@@ -210,32 +218,41 @@ def weighting(
         # Normalize the array
         x = utils.normalize(values=x, scales=std_x, locations=mean_x)
 
-        # Extract observation from weather stations
-        if (observed_variables_ws is not None) and (mask_ws is not None):
-            obs_weather_stations = x[observed_variables_ws]
-            obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations)
-            obs_weather_stations = obs_weather_stations[:, mask_ws, :]
-            obs_weather_stations = obs_weather_stations.reshape((
-                obs_weather_stations.shape[0],
-                -1,
-            ))
-        else:
-            obs_weather_stations = jnp.array([[]])
+        # Extract coarsened observations
+        if (coarsening_factor is not None) and (observed_variables_coarsening is not None):
+            obs_coarsening = x[observed_variables_coarsening]
+            obs_coarsening = utils.convert_xarray_to_jax(obs_coarsening)
+            obs_coarsening = utils.coarsening(x=obs_coarsening, factor=coarsening_factor)
+            obs_coarsening = obs_coarsening.reshape(obs_coarsening.shape[0], -1)
+            observations = obs_coarsening
 
-        # Extract observation from satellite
-        if (observed_variables_sat is not None) and (mask_sat is not None):
-            obs_satellite = x[observed_variables_sat]
-            obs_satellite = utils.convert_xarray_to_jax(obs_satellite)
-            obs_satellite = obs_satellite[:, mask_sat, :]
-            obs_satellite = obs_satellite.reshape((
-                obs_satellite.shape[0],
-                -1,
-            ))
         else:
-            obs_satellite = jnp.array([[]])
+            # Extract observation from weather stations
+            if (observed_variables_ws is not None) and (mask_ws is not None):
+                obs_weather_stations = x[observed_variables_ws]
+                obs_weather_stations = utils.convert_xarray_to_jax(obs_weather_stations)
+                obs_weather_stations = obs_weather_stations[:, mask_ws, :]
+                obs_weather_stations = obs_weather_stations.reshape((
+                    obs_weather_stations.shape[0],
+                    -1,
+                ))
+            else:
+                obs_weather_stations = jnp.array([[]])
 
-        # Concatenate observations from ground stations and satellite
-        observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
+            # Extract observation from satellite
+            if (observed_variables_sat is not None) and (mask_sat is not None):
+                obs_satellite = x[observed_variables_sat]
+                obs_satellite = utils.convert_xarray_to_jax(obs_satellite)
+                obs_satellite = obs_satellite[:, mask_sat, :]
+                obs_satellite = obs_satellite.reshape((
+                    obs_satellite.shape[0],
+                    -1,
+                ))
+            else:
+                obs_satellite = jnp.array([[]])
+
+            # Concatenate observations from ground stations and satellite
+            observations = jnp.concatenate([obs_weather_stations, obs_satellite], axis=1)
 
         return observations
 
@@ -243,8 +260,10 @@ def weighting(
         observations: Array,
         mask_sat: Union[Array, None],
         mask_ws: Union[Array, None],
+        coarsening_factor: Union[int, None],
         observed_variables_sat: Union[List[str], None],
         observed_variables_ws: Union[List[str], None],
+        observed_variables_coarsening: Union[List[str], None],
         sigma_y: Array,
         std_x: xarray.Dataset,
         mean_x: xarray.Dataset,
@@ -258,8 +277,10 @@ def weighting(
             - observation (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
             - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
             - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+            - coarsening_factor (Union[int, None]): coarsening factor
             - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
             - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+            - observed_variables_coarsening (Union[List[str], None]): ordered list of variables for coarsening
             - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
             - std_x (xarray.Dataset): standard deviation of unnormalized states
             - mean_x (xarray.Dataset): mean of unnnormalized states
@@ -273,8 +294,10 @@ def weighting(
             x=expectation,
             mask_sat=mask_sat,
             mask_ws=mask_ws,
+            coarsening_factor=coarsening_factor,
             observed_variables_sat=observed_variables_sat,
             observed_variables_ws=observed_variables_ws,
+            observed_variables_coarsening=observed_variables_coarsening,
             std_x=std_x,
             mean_x=mean_x,
         )
@@ -368,8 +391,10 @@ def weighting(
                     observations=observations,
                     mask_sat=mask_sat,
                     mask_ws=mask_ws,
+                    coarsening_factor=coarsening_factor,
                     observed_variables_sat=observed_variables_sat,
                     observed_variables_ws=observed_variables_ws,
+                    observed_variables_coarsening=observed_variables_coarsening,
                     sigma_y=sigma_y,
                     std_x=std_x,
                     mean_x=mean_x,
@@ -446,8 +471,10 @@ def sampling(
     observations: Array,
     mask_sat: Union[Array, None],
     mask_ws: Union[Array, None],
+    coarsening_factor: Union[int, None],
     observed_variables_sat: Union[List[str], None],
     observed_variables_ws: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
     sigma_y: Array,
     solver: str,
     max_iter: int,
@@ -474,8 +501,10 @@ def sampling(
         - observations (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
         - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
         - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+        - coarsening_factor (Union[int, None]): coarsening factor
         - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
         - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening
         - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
         - solver (str): solver to use in MMPS iterations
         - max_iter (int): maximum number of iterations to do when solving the system in MMPS
@@ -499,8 +528,10 @@ def sampling(
         observations: Array,
         mask_sat: Union[Array, None],
         mask_ws: Union[Array, None],
+        coarsening_factor: Union[int, None],
         observed_variables_sat: Union[List[str], None],
         observed_variables_ws: Union[List[str], None],
+        observed_variables_coarsening: Union[List[str], None],
         sigma_y: Array,
         solver: str,
         max_iter: int,
@@ -524,8 +555,10 @@ def sampling(
             - observations (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
             - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
             - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+            - coarsening_factor (Union[int, None]): coarsening factor
             - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
             - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+            - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening
             - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
             - solver (str): solver to use in MMPS iterations
             - max_iter (int): maximum number of iterations to do when solving the system in MMPS
@@ -537,8 +570,10 @@ def sampling(
         denoiser = ConditionalDenoiser(
             mask_satellite=mask_sat,
             mask_weather_stations=mask_ws,
+            coarsening_factor=coarsening_factor,
             observed_variables_satellite=observed_variables_sat,
             observed_variables_weather_stations=observed_variables_ws,
+            observed_variables_coarsening=observed_variables_coarsening,
             sigma_y=sigma_y,
             std_z=std_z,
             std_x=std_x,
@@ -601,8 +636,10 @@ def sampling(
             observations=observations,
             mask_sat=mask_sat,
             mask_ws=mask_ws,
+            coarsening_factor=coarsening_factor,
             observed_variables_sat=observed_variables_sat,
             observed_variables_ws=observed_variables_ws,
+            observed_variables_coarsening=observed_variables_coarsening,
             sigma_y=sigma_y,
             solver=solver,
             max_iter=max_iter,
@@ -682,8 +719,10 @@ def step(
     observations: Array,
     mask_sat: Union[Array, None],
     mask_ws: Union[Array, None],
+    coarsening_factor: Union[int, None],
     observed_variables_sat: Union[List[str], None],
     observed_variables_ws: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
     sigma_y: Array,
     forcings: xarray.Dataset,
     target_template: xarray.Dataset,
@@ -714,8 +753,10 @@ def step(
     - observations (Array): normalized observations hat{y}^{k+1} = [hat{y}^{k+1}_{ws}, hat{y}^{k+1}_{sat}] with dimension (batch=1, num_observed_variables)
     - mask_sat (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to satellite observations
     - mask_ws (Union[Array, None]): boolean Array of dimension (181, 360) corresponding to ground observations
+    - coarsening_factor (Union[int, None]): coarsening factor
     - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
     - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+    - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening
     - sigma_y (Array): covariance matrix of normalized observations with dimension (1, num_observed_variables)
     - forcings (xarray.Dataset): unnormalized forcing terms used by the GenCast denoiser
     - target_template (xarray.Dataset): template of the target with dimension (batch=1, time=1, lat=181, lon=360, levels=13)
@@ -746,8 +787,10 @@ def step(
             observations=observations,
             mask_sat=mask_sat,
             mask_ws=mask_ws,
+            coarsening_factor=coarsening_factor,
             observed_variables_sat=observed_variables_sat,
             observed_variables_ws=observed_variables_ws,
+            observed_variables_coarsening=observed_variables_coarsening,
             sigma_y=sigma_y,
             forcings=forcings,
             target_template=target_template,
@@ -786,8 +829,10 @@ def step(
         observations=observations,
         mask_sat=mask_sat,
         mask_ws=mask_ws,
+        coarsening_factor=coarsening_factor,
         observed_variables_sat=observed_variables_sat,
         observed_variables_ws=observed_variables_ws,
+        observed_variables_coarsening=observed_variables_coarsening,
         sigma_y=sigma_y,
         solver=solver,
         max_iter=max_iter_solver,
@@ -805,10 +850,13 @@ def filtering(
     alpha_init: float,
     mask_sat_path: Union[str, None],
     mask_ws_path: Union[str, None],
+    coarsening_factor: Union[int, None],
     observed_variables_sat: Union[List[str], None],
     observed_variables_ws: Union[List[str], None],
+    observed_variables_coarsening: Union[List[str], None],
     sigma_y_sat_path: Union[str, None],
     sigma_y_ws_path: Union[str, None],
+    sigma_y_coarsening_path: Union[str, None],
     sampler: str,
     sampler_config: Union[Dict, gencast.SamplerConfig],
     std_z_path: str,
@@ -830,12 +878,15 @@ def filtering(
         - N_thr_min (int): minimum number of efficient particles
         - N_thr_max (int): maximum number of efficient particles
         - alpha_init (float): first inflation coefficient
-        - mask_sat_path (str): path to satellite mask
-        - mask_ws_path (str): path to ground weather stations mask
-        - observed_variables_sat (str): ordered list of variables observed by satellite
-        - observed_variables_ws (str): ordered list of variables observed by ground weather stations
-        - sigma_y_sat_path (str): path to the covariance matrix of unnormalized satellite observations (with dimension (len(observed_variables_sat), 13)))
-        - sigma_y_ws_path (str): path to the covariance matrix of unnormalized ground observations (with dimension (len(observed_variables_ws),)
+        - mask_sat_path (Union[str, None]): path to satellite mask
+        - mask_ws_path (Union[str, None]): path to ground weather stations mask
+        - coarsening_factor (Union[int, None]): coarsening factor
+        - observed_variables_sat (Union[List[str], None]): ordered list of variables observed by satellite
+        - observed_variables_ws (Union[List[str], None]): ordered list of variables observed by ground weather stations
+        - observed_variables_coarsening (Union[List[str], None]): ordered list of observed variables for coarsening
+        - sigma_y_sat_path (Union[str, None]): path to the covariance matrix of unnormalized satellite observations (with dimension (len(observed_variables_sat), 13)))
+        - sigma_y_ws_path (Union[str, None]): path to the covariance matrix of unnormalized ground observations (with dimension (len(observed_variables_ws),)
+        - sigma_y_coarsening_path (Union[str, None]): path to the covariance matrix of unnormalized coarsened observations (with dimension (num_variables,)
         - sampler (str): sampler to use during the reverse diffusion process
         - sampler_config (Union[Dict, gencast.SamplerConfig]): configuration of the sampler
         - min_x_path (str): path to min_x statistic
@@ -920,16 +971,23 @@ def filtering(
         sigma_y_ws = jnp.array(np.load(sigma_y_ws_path).astype(jnp.float32))
     else:
         sigma_y_ws = None
+    if sigma_y_coarsening_path is not None:
+        sigma_y_coarsening = jnp.array(np.load(sigma_y_coarsening_path).astype(jnp.float32))
+    else:
+        sigma_y_coarsening = None
 
     # Normalized observations covariance matrix
     sigma_hat_y = utils.normalized_observation_covariance(
         std_x=std_x,
         mask_satellite=mask_sat,
         mask_weather_stations=mask_ws,
+        coarsening_factor=coarsening_factor,
         sigma_y_satellite=sigma_y_sat,
         sigma_y_weather_stations=sigma_y_ws,
+        sigma_y_coarsening=sigma_y_coarsening,
         observed_variables_satellite=observed_variables_sat,
         observed_variables_weather_stations=observed_variables_ws,
+        observed_variables_coarsening=observed_variables_coarsening,
     )
 
     # Get the number of steps to do
@@ -984,9 +1042,15 @@ def filtering(
                 sigma_y=sigma_hat_y,
                 mask_satellite=mask_sat,
                 mask_weather_stations=mask_ws,
+                coarsening_factor=coarsening_factor,
                 observed_variables_satellite=observed_variables_sat,
                 observed_variables_weather_stations=observed_variables_ws,
+                observed_variables_coarsening=observed_variables_coarsening,
             )
+
+            # Save the current observation
+            obs_file_name = new_particles_path + str("y.npy")
+            np.save(obs_file_name, np.array(current_observations))
 
             # Apply the step function
             step(
@@ -1000,8 +1064,10 @@ def filtering(
                 observations=current_observations,
                 mask_sat=mask_sat,
                 mask_ws=mask_ws,
+                coarsening_factor=coarsening_factor,
                 observed_variables_sat=observed_variables_sat,
                 observed_variables_ws=observed_variables_ws,
+                observed_variables_coarsening=observed_variables_coarsening,
                 sigma_y=sigma_hat_y,
                 forcings=current_forcings,
                 target_template=current_template,
