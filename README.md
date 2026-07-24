@@ -3,7 +3,7 @@
 This repository contains the implementation of the GenCast experiment from the paper *Training-Free Bayesian Filtering with Generative Emulators* by Thomas Savary, François Rozet, and Gilles Louppe, published at the *International Conference on Machine Learning* (ICML) in 2026.
 
 <p align="center">
-        <img src="./images/2019_03/idealist/fig1.svg" alt="Skill in the case of idealist observations."/>
+        <img src="./images/2019_03/idealist/skill_all.png">
 </p>
 
 
